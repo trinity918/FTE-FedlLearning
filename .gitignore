@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Results (keep directory, ignore generated files)
+fte_fl/results/*.json
+fte_fl/results/*.png
+fte_fl/results/*.pdf
+fte_fl/results/*.csv
+
+# OS
+.DS_Store
+Thumbs.db

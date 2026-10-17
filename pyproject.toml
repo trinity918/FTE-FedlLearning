@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fte-fl"
+version = "0.1.0"
+description = "Filter-Then-Encrypt vs Encrypt-Then-Filter Byzantine-robust federated learning"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "PyYAML",
+    "tenseal==0.3.16",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "timm>=0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["fte_fl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
