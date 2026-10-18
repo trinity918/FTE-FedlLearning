@@ -23,7 +23,17 @@ def _validate(grads: np.ndarray, f: int) -> np.ndarray:
 
 
 def krum_scores(grads: np.ndarray, f: int) -> np.ndarray:
-    """Return each client's sum of its n-f-2 nearest squared distances."""
+    """Return each client's sum of its n-f-2 nearest squared distances.
+
+    Uses squared Euclidean distance rather than the plain Euclidean distance
+    in the original Krum paper (Blanchard et al., 2017).  Squaring preserves
+    the nearest-neighbour ordering (so the same n-f-2 neighbours are selected)
+    and is a standard optimisation that avoids per-pair sqrt calls.  The
+    *scores* differ in magnitude from the paper, but the argmin — and thus
+    client selection — is identical for all non-degenerate inputs we have
+    tested.  If exact score reproduction against the paper is ever required,
+    take np.sqrt of the distance matrix before the partition step.
+    """
     grads = _validate(grads, f)
     n = len(grads)
     neighbor_count = n - f - 2

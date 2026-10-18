@@ -36,3 +36,24 @@ def test_scores_are_finite_and_nonnegative():
 def test_rejects_invalid_f():
     with pytest.raises(ValueError):
         krum(np.zeros((5, 4)), f=2)
+
+
+def test_attacker_score_much_greater_than_honest():
+    """Spec requires 'attackers score >> honest' — verify the magnitude gap."""
+    grads = make_gradients()
+    _, scores = krum(grads, f=2)
+    honest_min = np.min(scores[:5])
+    # Both attackers should have scores at least 100x the best honest score.
+    assert scores[5] > 100 * honest_min
+    assert scores[6] > 100 * honest_min
+
+
+def test_multi_krum_default_m_selects_n_minus_f_minus_2():
+    """When m is None, multi_krum should select exactly n-f-2 clients."""
+    grads = make_gradients()
+    n = len(grads)
+    f = 2
+    expected_m = n - f - 2  # 7 - 2 - 2 = 3
+    selected, _ = multi_krum(grads, f=f, m=None)
+    assert len(selected) == expected_m
+    assert all(idx < 5 for idx in selected)
