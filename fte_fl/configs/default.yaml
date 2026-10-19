@@ -1,11 +1,9 @@
 project:
   name: fte-fl
   seed: 42
-
 runtime:
   device: cpu
   num_workers: 1
-
 crypto:
   scheme: CKKS
   poly_modulus_degree: 16384
@@ -13,11 +11,28 @@ crypto:
   global_scale: 1099511627776
   chunk_size: 8192
   numerical_tolerance: 0.001
-
 defense:
   name: multikrum
   byzantine_fraction: 0.2
-
 experiment:
   rounds: 25
   clients_per_round: 10
+datasets:
+  femnist:
+    train_dir: /mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/data/femnist/data/train
+    test_dir: /mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/data/femnist/data/test
+    num_clients: 500
+    batch_size: 32
+  speech_commands:
+    data_dir: /mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02
+    num_clients: 800
+    n_mels: 64
+    n_fft: 400
+    hop_length: 160
+    sample_rate: 16000
+    clip_duration: 1.0
+  cifar100:
+    cache_dir: ./data_cache
+    num_clients: 100
+    partition: dirichlet
+    alpha: 0.1

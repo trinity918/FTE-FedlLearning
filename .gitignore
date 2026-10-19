@@ -15,11 +15,18 @@ venv/
 .vscode/
 .idea/
 
+# Dataset cache (torchvision downloads)
+data_cache/
+
 # Results (keep directory, ignore generated files)
 fte_fl/results/*.json
 fte_fl/results/*.png
 fte_fl/results/*.pdf
 fte_fl/results/*.csv
+
+# Scratch / audit files
+audit_*.py
+*.log
 
 # OS
 .DS_Store

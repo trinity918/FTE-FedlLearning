@@ -26,3 +26,6 @@ include = ["fte_fl*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "realdata: requires real datasets on disk (deselect with -m 'not realdata')",
+]
