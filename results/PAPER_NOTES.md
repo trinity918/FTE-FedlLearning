@@ -20,29 +20,53 @@ from running `python -m fte_fl.models.verify_models` with seed=42.
 
 ### Model B — BCResNet1 (Speech Commands)
 
-- Architecture: ported faithfully from the official Qualcomm repo
-  (https://github.com/Qualcomm-AI-research/bcresnet).
-- Parameters: **329,923** total, all trainable. Within ±10% of 321,000 target.
+- Architecture: ported from the official Qualcomm repo
+  (https://github.com/Qualcomm-AI-research/bcresnet), inspecting `bcresnet.py`
+  and `main.py` directly.
+- Parameters: **335,811** total, all trainable and all receiving gradients.
+  Within ±10% of 321,000 target.
+- Variant: BC-ResNet-8 adapted to 64 mel bins / 35 classes, SubSpectralNorm S=8.
 - Reference: Kim et al., "Broadcasted Residual Learning for Efficient Keyword
   Spotting", Interspeech 2021 (arXiv:2106.04140).
 
-**Naming clarification (important):**
-  The project specification refers to "BC-ResNet-1 (~321k)". This is a naming
-  ambiguity in the original requirement. In the paper, BC-ResNet-{τ} uses τ as
-  a *channel-width multiplier* (not a model index). BC-ResNet-1 (τ=1) has
-  approximately 10k parameters; BC-ResNet-8 (τ=8) has approximately 321k. The
-  official Qualcomm codebase maps `--tau 8` to `BCResNets(base_c=8×8=64)`.
-  We implement BC-ResNet with base_c=64 (the 321k configuration) and name the
-  class `BCResNet1` to satisfy the filename convention.
+**Correction (2026-10-20):** an earlier version reported 329,923 parameters.
+That count included 14,720 SSN parameters that never affected the output:
+with S=5 and F ∈ {32, 16, 8}, every SSN layer silently fell back to plain
+BatchNorm, so the grouped BN was dead weight inside `trainable_vector()`.
+
+**Naming clarification (research-critical):**
+  The Python class is `BCResNet1` for file-naming convenience, but it
+  implements **BC-ResNet-8 (τ=8, base_c=64)** — the ~321k-parameter variant.
+  In the paper, τ is a channel-width multiplier: BC-ResNet-1 (τ=1) has ~10k
+  params; BC-ResNet-8 (τ=8) has ~321k params.  The official Qualcomm
+  repository maps `--tau 8` to `BCResNets(int(self.tau * 8))`, i.e. base_c=64.
+  The source files inspected were `bcresnet.py` (BCResNets class, BCResBlock)
+  and `main.py` (_load_model) at the URL above.  The module constant
+  `BC_RESNET_TAU = 8` is the canonical record in the code.
+
+  Any research report must describe the model as BC-ResNet-8 (τ=8), not
+  BC-ResNet-1.
 
 **Adaptations vs. paper:**
 - Input: 64 mel bins (paper: 40). The stem Conv2d(1→128) with stride=(2,1)
   halves frequency from 64→32 immediately. Subsequent stages stride F further
   to 32→16→8.
-- SubSpectralNorm: S=5 (matching the paper). Falls back to plain BatchNorm2d
-  when the frequency dimension is not divisible by 5 (this occurs in some
-  intermediate layers due to our different input frequency).
+- SubSpectralNorm: **S=8** (upstream: S=5). Upstream (40 bins) feeds SSN with
+  F = [20, 20, 10, 10, 5×8], i.e. 4/2/1 bins per sub-band. Ours feeds
+  F = [32, 32, 16, 16, 8×8]; S=5 divides none of these. S=8 reproduces the
+  4/2/1 bins-per-sub-band granularity exactly (trade-off: 8 sub-bands per
+  layer instead of 5, so each sub-band covers 1/8 rather than 1/5 of the
+  spectrum). As upstream, indivisible F raises an error; no plain-BN fallback.
+- Classes: 35 (full GSC v2 label set). Upstream trains the 12-class task
+  (10 keywords + silence + unknown) for both v1 and v2; the paper's accuracy
+  figures are for that 12-class task and are not comparable.
+- Classifier: DW 5×5 without frequency padding maps F=8→4 (upstream 5→1);
+  AdaptiveAvgPool averages the remaining rows.
 - Time frames: 101 (paper: 98). Head uses AdaptiveAvgPool so this is irrelevant.
+- Upstream settings (n_mels, label set, SSN group count and affine mode,
+  stride stages, classifier) were re-checked against the Qualcomm repo's
+  `bcresnet.py`, `subspectralnorm.py`, `utils.py`, `main.py` on 2026-10-20.
+  This was a settings check, not a line-by-line diff.
 
 ---
 
@@ -77,54 +101,62 @@ from running `python -m fte_fl.models.verify_models` with seed=42.
 - Reference: Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models",
   ICLR 2022 (arXiv:2106.09685).
 
-**Pretrained-weight status:**
-  Built with `pretrained=False` by default (offline use). The `pretrained_loaded`
-  flag is `False` in all reported results. Pretrained weights (~330 MB) can be
-  loaded by passing `pretrained=True`, which requires internet access to the
-  timm HuggingFace hub. This has NOT been verified in the current environment.
-  The `verify_models.py --pretrained` flag exposes this path; it is a separate
-  concern from the offline architecture verification.
+**Pretrained-weight status (important):**
+  The constructor defaults to `pretrained=False`, meaning the base ViT-Base/16
+  is **randomly initialized** in all current builds.  The `pretrained_loaded`
+  attribute equals the `pretrained` flag passed at construction (timm raises
+  if a requested download fails; loaded weights are not independently
+  checked).  In the current environment all builds use
+  `pretrained=False` — no pretrained weights have been downloaded or loaded.
+  Passing `pretrained=True` requires internet access to the timm HuggingFace
+  hub (~330 MB, vit_base_patch16_224.augreg_in21k_ft_in1k or similar).  This
+  has not been verified in the current environment.
+
+**Frozen random backbone (research-critical):**
+  With `pretrained=False`, training updates only the LoRA adapters and the
+  head on top of a frozen, randomly initialized ViT-Base.  Results from such
+  runs must NOT be described as pretrained fine-tuning, and accuracy may be
+  limited by the random frozen features.
 
 ---
 
 ### Model E — LoRAAST (Speech Commands)
 
-- Architecture: Audio Spectrogram Transformer (AST) style, built from scratch.
-- Base: ViT-style transformer (embed_dim=192, depth=12, 3 heads) with a 2-D
-  patch embedding over the log-mel spectrogram, matching the architectural
-  design of Gong et al. 2021.
+**Important: this is an AST-*style* spectrogram transformer, NOT a faithful
+reproduction of the Audio Spectrogram Transformer of Gong et al. 2021.**
+
+- Architecture: A ViT-style transformer applied to 2-D log-mel spectrogram
+  patches (the same general approach as AST), built from scratch using the ViT
+  components in `vit_tiny.py`. The backbone class is `SpectrogramTransformerBase`.
 - LoRA: r=8, α=16, applied to the top 6 blocks' `qkv` and `fc1`.
 - Trainable: **89,699** (adapters + classification head). < 2M asserted.
-- Frozen: **5,393,856** (base AST weights, randomly initialized).
+- Frozen: **5,393,856** (base spectrogram transformer weights, randomly initialized).
 - Input: (1, 64, 101) log-mel. Patch=16×16, time axis zero-padded to 112 →
   4×7=28 patches.
+- `pretrained_loaded = False` always (no pretrained weights available offline).
+- **Frozen random backbone:** the base is random AND frozen, so the patch and
+  positional embeddings, CLS token, final norm and blocks 0–5 never train.
+  Only the top-6-block adapters and the head learn. This is LoRA on random
+  features, not fine-tuning; accuracy may be limited by this design.
 - Reference: Gong et al., "AST: Audio Spectrogram Transformer",
-  Interspeech 2021 (arXiv:2104.01778).
+  Interspeech 2021 (arXiv:2104.01778) — this is the inspiration, not the
+  implementation source.
 
 **timm AST availability:**
-  timm 1.0.30 does NOT contain a native AST model. A registry search for
-  'ast', 'audio_spectrogram', 'wav2vec', and 'hubert' returned zero matches
-  (the substring 'ast' only matches FasteRNet/FastViT models coincidentally).
-  The AST architecture is mathematically equivalent to a ViT applied to 2-D
-  spectrograms; we implement it directly from the ViT building blocks in
-  `vit_tiny.py` (TransformerBlock, Attention, MLP), with a specialized
-  SpectrogramPatchEmbed module.
+  timm 1.0.30 does NOT contain a native AST model. Registry search for
+  'ast', 'audio_spectrogram', 'wav2vec', and 'hubert' returned zero matches.
+  The substring 'ast' only matches FasteRNet/FastViT models coincidentally.
 
-**No pretrained AST weights:**
-  Gong et al. fine-tune a DeiT-Base pretrained on ImageNet-21k. No offline
-  checkpoint of this specific fine-tuned model is available in this environment.
-  The base parameters are randomly initialized. This is a known limitation that
-  will affect convergence in experiments — the LoRAAST model requires significant
-  training from scratch rather than fast adaptation from a strong prior.
-  Results from this model should be interpreted accordingly.
-
-**Deviations from Gong 2021:**
-  1. Non-overlapping patches (stride=16) instead of the paper's overlapping
-     patches (stride=10). This reduces the sequence from ~248 tokens to 28,
-     which lowers compute but reduces temporal resolution.
-  2. Random base initialization instead of pretrained DeiT-Base weights.
-  3. 64 mel bins instead of 128 (the paper uses 128 for AudioSet experiments).
-     Our input (1, 64, 101) is defined by the Speech Commands preprocessing.
+**Deviations from Gong 2021 (these are NOT mere adaptations — they are
+fundamental differences that invalidate direct comparison with AST results):**
+  1. Random base initialization: Gong et al. initialize from DeiT-Base
+     pretrained on ImageNet-21k, then fine-tune. Here the backbone is randomly
+     initialized and frozen; only the LoRA adapters and the classification
+     head are trained. This substantially affects convergence and final accuracy.
+  2. Non-overlapping patches (stride=16): The paper uses stride=10 (overlapping),
+     giving ~248 tokens. We use stride=16 (non-overlapping), giving 28 tokens.
+  3. Much smaller backbone: embed_dim=192, heads=3. Gong uses embed_dim=768, heads=12.
+  4. 64 mel bins: The paper uses 128 for AudioSet. Our preprocessing yields 64.
 
 ---
 

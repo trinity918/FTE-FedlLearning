@@ -95,7 +95,15 @@ def _verify_one(
     return result
 
 
-def verify_all(pretrained_vit: bool = False, seed: int = 42) -> list[ModelResult]:
+MODEL_KEYS = ("cnn", "bcresnet", "vit", "lora_vit", "lora_ast")
+
+
+def verify_all(
+    pretrained_vit: bool = False, seed: int = 42, model: str = "all"
+) -> list[ModelResult]:
+    """Verify all models, or only the one named by `model` (a MODEL_KEYS entry)."""
+    if model != "all" and model not in MODEL_KEYS:
+        raise ValueError(f"Unknown model {model!r}; expected 'all' or one of {MODEL_KEYS}")
     set_seed(seed)
 
     from fte_fl.models.cnn_small import CnnSmall
@@ -142,6 +150,9 @@ def verify_all(pretrained_vit: bool = False, seed: int = 42) -> list[ModelResult
         ),
     ]
 
+    if model != "all":
+        specs = [specs[MODEL_KEYS.index(model)]]
+
     results = []
     for spec in specs:
         print(f"  Verifying {spec['name']}...", end=" ", flush=True)
@@ -156,9 +167,9 @@ def _fmt(n: int) -> str:
     return f"{n:,}"
 
 
-def print_table(results: list[ModelResult]) -> None:
+def print_table(results: list[ModelResult]) -> bool:
     col_widths = {
-        "Model":            10,
+        "Model":            12,
         "Dataset":          16,
         "Input":            16,
         "Classes":           7,
@@ -166,9 +177,9 @@ def print_table(results: list[ModelResult]) -> None:
         "Trainable":        10,
         "Frozen":           10,
         "CKKS est.":         9,
+        "Init":              8,
         "Fwd":               5,
         "Bwd":               5,
-        "Pretrained":       10,
     }
     header = "  ".join(k.ljust(v) for k, v in col_widths.items())
     sep = "  ".join("-" * v for v in col_widths.values())
@@ -185,6 +196,7 @@ def print_table(results: list[ModelResult]) -> None:
         ok = r.forward_ok and r.backward_ok and not r.error
         if not ok:
             all_ok = False
+        init_label = "pretrained" if r.pretrained_loaded else "random"
         row = [
             r.name.ljust(col_widths["Model"]),
             r.dataset.ljust(col_widths["Dataset"]),
@@ -194,9 +206,9 @@ def print_table(results: list[ModelResult]) -> None:
             _fmt(r.trainable_params).ljust(col_widths["Trainable"]),
             _fmt(r.frozen_params).ljust(col_widths["Frozen"]),
             str(r.ckks_chunks).ljust(col_widths["CKKS est."]),
+            init_label.ljust(col_widths["Init"]),
             ("✓" if r.forward_ok else "✗").ljust(col_widths["Fwd"]),
             ("✓" if r.backward_ok else "✗").ljust(col_widths["Bwd"]),
-            ("yes" if r.pretrained_loaded else "no").ljust(col_widths["Pretrained"]),
         ]
         print("  ".join(row))
         if r.error:
@@ -205,9 +217,17 @@ def print_table(results: list[ModelResult]) -> None:
     print(sep)
     print()
     print("Notes:")
-    print("  CKKS est. = ceil(trainable_params / 8192) — estimated CKKS chunk count.")
-    print("  Pretrained = whether real pretrained weights were actually loaded.")
-    print("  LoRAViT and LoRAAST trainable params are adapter + head parameters only.")
+    print("  CKKS est.  = ceil(trainable_params / 8192) — HE cost estimate only.")
+    print("  Init       = 'random' (randomly initialized) or 'pretrained' (real")
+    print("               pretrained weights loaded from hub). Default is random.")
+    print("  Fwd/Bwd    = forward/backward execution check only. Does NOT verify")
+    print("               architectural fidelity or model accuracy.")
+    print("  BCResNet1  = implements BC-ResNet-8 (τ=8, base_c=64) from Kim et al.")
+    print("               2021. Class name 'BCResNet1' is a project convention only.")
+    print("  LoRAAST    = AST-style spectrogram transformer (NOT a faithful AST")
+    print("               reproduction). Randomly initialized. See lora_ast.py.")
+    print("  LoRAViT    = LoRA on timm ViT-Base/16. Use --pretrained for real")
+    print("               pretrained weights (requires internet, ~330 MB).")
     print()
 
     if all_ok:
@@ -221,14 +241,15 @@ def print_table(results: list[ModelResult]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="FTE-FL model verification")
     parser.add_argument("--model", default="all",
-                        choices=["cnn", "bcresnet", "vit", "lora_vit", "lora_ast", "all"])
+                        choices=[*MODEL_KEYS, "all"])
     parser.add_argument("--pretrained", action="store_true",
                         help="Attempt real pretrained-weight loading for LoRAViT")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     print(f"\nRunning model verification (seed={args.seed})")
-    results = verify_all(pretrained_vit=args.pretrained, seed=args.seed)
+    results = verify_all(pretrained_vit=args.pretrained, seed=args.seed,
+                         model=args.model)
     all_ok = print_table(results)
 
     sys.exit(0 if all_ok else 1)

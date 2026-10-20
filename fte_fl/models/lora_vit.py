@@ -6,27 +6,34 @@ Reference:
   Dosovitskiy et al., "An Image is Worth 16x16 Words", ICLR 2021.
 
 Architecture:
-  Base:  timm vit_base_patch16_224  — 86M parameters (all frozen).
-  LoRA:  r=8, alpha=16, applied to attn.qkv (implicitly q and v via
-         the fused QKV projection) and mlp.fc1 in every transformer block.
-  Trainable: < 2 000 000 parameters (asserted at construction).
+  Base:      timm vit_base_patch16_224 — 86M parameters, all frozen.
+  LoRA:      r=8, alpha=16, applied to attn.qkv (fused QKV projection) and
+             mlp.fc1 in every transformer block.
+  Trainable: adapter parameters + classification head, < 2M total.
 
 Input handling for CIFAR-100 (32×32 → 224×224):
   ViT-Base/16 was designed for 224×224 images (14×14 = 196 patches of 16×16).
-  CIFAR-100 images are 32×32.  We use torchvision-style bilinear resize inside
-  forward() to upscale to 224×224 before passing to the ViT backbone.
-  This is the simplest, most compatible approach and matches common fine-tuning
-  practice for CIFAR on ViT-Base (see Touvron et al., DeiT, 2021).
-  Alternative (adjusting positional embeddings for 32×32 / patch=2) was
-  considered but discarded because it requires re-initializing pos_embed and
-  loses the pretrained spatial structure.
+  CIFAR-100 images are 32×32.  We bilinearly resize inside forward() to
+  224×224 before passing to the ViT backbone.  This is the standard practice
+  for fine-tuning ViT-Base on CIFAR (see Touvron et al., DeiT, 2021).
 
-Pretrained-weight status:
-  Weights are downloaded once from the timm HuggingFace hub
-  (~330 MB, vit_base_patch16_224.augreg_in21k_ft_in1k or similar).
-  When offline or if download fails, pass pretrained=False; the base model
-  will be randomly initialized and the LoRA adapter structure is identical.
-  The build argument `pretrained` is exposed to the caller.
+Initialization / pretrained-weight status:
+  The constructor `pretrained` argument controls whether timm loads the
+  official ViT-Base/16 weights from the HuggingFace hub (~330 MB).
+  The default is `pretrained=False`, meaning the base model is **randomly
+  initialized**.  The `pretrained_loaded` attribute is set from the
+  `pretrained` argument; timm raises if a requested download fails, but the
+  loaded weights are not independently checked.
+
+  In the current project environment, all builds use `pretrained=False`
+  (offline use).  No pretrained weights have been downloaded or verified.
+  The `verify_models.py` output therefore shows `Init: random`.
+  Passing `pretrained=True` requires internet access to the timm HuggingFace
+  hub and is a one-time ~330 MB download.
+
+  With `pretrained=False`, training updates LoRA adapters and the head on
+  top of a frozen, randomly initialized ViT-Base.  Such runs are NOT
+  pretrained fine-tuning and should not be described as such.
 """
 from __future__ import annotations
 
@@ -50,8 +57,9 @@ _LORA_TARGETS = {"qkv", "fc1"}  # attn QKV projection + MLP first layer
 class LoRAViT(FTEModel):
     """Frozen ViT-Base/16 with LoRA adapters for CIFAR-100.
 
-    Only LoRA adapter parameters (lora_A, lora_B in each replaced module)
-    receive gradients.  All base ViT weights are frozen.
+    Trainable parameters are the LoRA adapters (lora_A, lora_B in each
+    replaced module) and the classification head.  All other base ViT
+    weights are frozen.
     The trainable count is asserted < 2 000 000 at construction time.
     """
 

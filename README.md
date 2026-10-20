@@ -79,7 +79,7 @@ python -m fte_fl.models.verify_models --pretrained
 | Model     | Dataset          | Input              | Classes | Total params | Trainable | Frozen     | CKKS chunks (est.) |
 |-----------|------------------|--------------------|---------|-------------|-----------|------------|--------------------|
 | CnnSmall  | FEMNIST          | (1, 28, 28)        | 62      | 161,438     | 161,438   | 0          | 20                 |
-| BCResNet1 | Speech Commands  | (1, 64, 101)       | 35      | 329,923     | 329,923   | 0          | 41                 |
+| BCResNet1 | Speech Commands  | (1, 64, 101)       | 35      | 335,811     | 335,811   | 0          | 41                 |
 | ViTTiny   | CIFAR-100        | (3, 32, 32)        | 100     | 5,380,132   | 5,380,132 | 0          | 657                |
 | LoRAViT   | CIFAR-100        | (3, 32, 32)        | 100     | 86,539,108  | 740,452   | 85,798,656 | 91                 |
 | LoRAAST   | Speech Commands  | (1, 64, 101)       | 35      | 5,483,555   | 89,699    | 5,393,856  | 11                 |
@@ -95,15 +95,23 @@ of CKKS ciphertext chunks needed to encrypt one model update.
 - Reference: McMahan et al., AISTATS 2017.
 
 **BCResNet1** (`fte_fl/models/bc_resnet.py`)
-- BC-ResNet with τ=8 (base_c=64), the ~321k parameter variant from Kim et al. 2021.
-- Architecture ported faithfully from the official Qualcomm repo
-  (https://github.com/Qualcomm-AI-research/bcresnet).
-- The parameter suffix "1" in the filename is a project naming convention;
-  the 321k model corresponds to `--tau 8` in the official repo (base_c=τ×8=64).
-- 4 stages of BCResBlocks with frequency-axis strides; SubSpectralNorm (S=5).
+- **Implements BC-ResNet-8 (τ=8, base_c=64)** from Kim et al. 2021. The class
+  name `BCResNet1` is a project file-naming convention — the implemented
+  configuration is BC-ResNet-8. The module constant `BC_RESNET_TAU = 8` is
+  the canonical record.
+- Architecture ported from the official Qualcomm repo
+  (https://github.com/Qualcomm-AI-research/bcresnet), inspecting `bcresnet.py`
+  and `main.py`. The official CLI maps `--tau 8` to `base_c = 8×8 = 64`.
+- 4 stages of BCResBlocks with frequency-axis strides; SubSpectralNorm with
+  **S=8** sub-bands (upstream: S=5 at 40 bins). With 64 mel bins the SSN layers
+  see F = 32/16/8, which S=5 does not divide; S=8 keeps upstream's 4/2/1
+  frequency bins per sub-band at each stage. Indivisible F raises an error.
 - Stem Conv2d(1→128, 5×5, stride=(2,1)) halves frequency dimension immediately.
-- Adaptation: 64 mel bins (vs. 40 in the paper); head uses AdaptiveAvgPool.
-- 329,923 parameters (target 321k ± 10%); assertion enforced at build.
+- Adaptations: 64 mel bins (upstream: 40); 35 classes (upstream: 12-class
+  task); the classifier's DW 5×5 leaves F=4 (upstream: 1), averaged by
+  AdaptiveAvgPool.
+- 335,811 parameters, all used in the forward pass (target 321k ± 10%);
+  assertion enforced at build.
 - Reference: Kim et al., Interspeech 2021 (arXiv:2106.04140).
 
 **ViTTiny** (`fte_fl/models/vit_tiny.py`)
@@ -118,21 +126,27 @@ of CKKS ciphertext chunks needed to encrypt one model update.
 - Frozen timm ViT-Base/16 (86M params) + LoRA r=8, α=16 on `qkv` and `fc1`.
 - CIFAR-100 32×32 images are bilinearly resized to 224×224 inside `forward()`.
 - 740,452 trainable parameters (adapters + head); 85,798,656 frozen.
-- `pretrained=False` by default (offline use). Pass `pretrained=True` for
-  real pretrained weights; requires internet access (~330 MB download).
-  Pretrained-weight status reported in verify_models output.
+- **Current initialization: random (`pretrained=False`, the default).** No
+  pretrained weights have been downloaded or loaded in this environment.
+  Pass `pretrained=True` for real pretrained weights; requires internet access
+  (~330 MB). `pretrained_loaded` records the `pretrained` argument; loaded
+  weights are not independently checked.
+- With random init, training updates LoRA adapters + head on a **frozen random
+  backbone**; this is not pretrained fine-tuning.
 - References: Dosovitskiy et al. (ViT), Hu et al., ICLR 2022 (LoRA).
 
 **LoRAAST** (`fte_fl/models/lora_ast.py`)
-- AST-style architecture (ViT applied to log-mel spectrograms) built from scratch.
-- timm 1.0.30 does not include an AST model; this is implemented directly
-  using ViT building blocks (embed_dim=192, depth=12, 3 heads, patch=16).
-- Patch embedding: 16×16 patches on (1, 64, 101) input → 28 tokens (4×7,
-  with time axis zero-padded to 112).
+- **AST-style spectrogram transformer, NOT a faithful AST implementation.**
+  This is a ViT-style backbone applied to 2-D log-mel patches (the same general
+  approach as Gong et al. 2021), built from scratch using `SpectrogramTransformerBase`.
+  It must not be compared with published AST numbers.
+- Key differences from Gong 2021: random initialization (no ImageNet pretraining),
+  non-overlapping 16×16 patches (vs. overlapping, stride=10), smaller backbone
+  (embed_dim=192 vs. 768), 64 mel bins (vs. 128).
 - LoRA r=8, α=16 applied to the top 6 blocks' `qkv` and `fc1`.
-- 89,699 trainable parameters; 5,393,856 frozen.
-- No pretrained weights (no offline AST checkpoint available). Documented as
-  a limitation in PAPER_NOTES.md.
+- 89,699 trainable parameters; 5,393,856 frozen. `pretrained_loaded = False`.
+- The frozen backbone is **random**: patch/positional embeddings, CLS token and
+  blocks 0–5 never train. This is LoRA on random features, not fine-tuning.
 - References: Gong et al., Interspeech 2021 (arXiv:2104.01778); Hu et al. (LoRA).
 
 ## Datasets

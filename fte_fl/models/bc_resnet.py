@@ -4,40 +4,60 @@ Reference:
   Kim et al., "Broadcasted Residual Learning for Efficient Keyword Spotting",
   Interspeech 2021 (arXiv:2106.04140).
   Official implementation: https://github.com/Qualcomm-AI-research/bcresnet
-  License: see upstream repo (Qualcomm Technologies).
+  License: see upstream repo (Qualcomm Technologies, Inc.).
+  Source files inspected: bcresnet.py and main.py for the port;
+  subspectralnorm.py and utils.py as well for the 2026-10-20 settings
+  re-check (see below).
 
-Naming convention:
-  The paper defines BC-ResNet with a width parameter τ (tau).  The headline
-  model in the paper is BC-ResNet-8 (τ=8), achieving ~321 k parameters and
-  98.7% accuracy on Speech Commands v2.  The project specification targets
-  ~321 k, which corresponds to τ=8.  We name the class BCResNet1 to satisfy
-  the project's filename convention; the τ parameter is exposed and documented.
+Naming clarification — important:
+  In the BC-ResNet paper, the model suffix is a channel-width multiplier τ,
+  not a ranked model index.  "BC-ResNet-8" means τ=8, base_c=64,
+  giving ~321k parameters and the paper's best reported accuracy (98.7% on
+  the 12-class GSCv2 task; a paper figure, not reproduced here).
+  "BC-ResNet-1" means τ=1, base_c=8, giving ~10k parameters.
 
-Architecture (faithfully ported from the official Qualcomm repo):
-  Stem:      Conv2d(1→2τ, 5×5, stride=(2,1)) + BN + ReLU
-             → halves the frequency dimension on the first step.
-  Stage 1:   2 × BCResBlock, 2τ→τ,    idx=0 (no stride)
-  Stage 2:   2 × BCResBlock, τ→1.5τ,  idx=1, stride=(2,1)
-  Stage 3:   4 × BCResBlock, 1.5τ→2τ, idx=2, stride=(2,1)
-  Stage 4:   4 × BCResBlock, 2τ→2.5τ, idx=3, no stride
-  Classifier: DW 5×5 + PW 1×1(2.5τ→4τ) + BN + ReLU + AvgPool + 1×1 Conv
+  This project's specification targets ~321k parameters, which corresponds
+  to the BC-ResNet-8 (τ=8) configuration.  The Python class is named
+  BCResNet1 for file-naming convenience; the `tau` constructor argument
+  defaults to 8, and the module-level constant BC_RESNET_TAU = 8 is the
+  canonical record.  Any researcher reading this code should treat the
+  implemented model as **BC-ResNet-8 (τ=8, base_c=64)**.
 
-  For τ=8 (the 321k model):
-    base_c = τ × 8 = 64, channels = [128, 64, 96, 128, 160, 256].
+Architecture (ported from the Qualcomm reference implementation):
+  The implementation was derived by reading bcresnet.py (BCResNets class and
+  BCResBlock class) and main.py (_load_model: BCResNets(int(self.tau * 8)))
+  directly from https://github.com/Qualcomm-AI-research/bcresnet.
 
-Input:  (B, 1, 64, 101) — log-mel spectrogram (64 mel bins, 101 time frames).
-Output: (B, 35)          — logits for 35 Speech Commands classes.
+  Key components carried over (deviations listed below):
+    - Stem: Conv2d(1→2·base_c, 5×5, stride=(2,1)) + BN + ReLU
+    - BCResBlock with:
+        f2 (2-D path): optional 1×1 transition + depthwise (3,1) + SSN
+        f1 (1-D broadcast path): AvgPool(F→1) + dilated DW (1,3) + SiLU + PW 1×1 + Dropout2d
+        residual: f1 + f2; identity skip only for non-transition blocks
+    - Four stages, n=[2,2,4,4] blocks, frequency strides at stages 1 and 2
+    - Classifier: DW (5,5) + PW 1×1 + BN + ReLU + AvgPool + Conv1×1(→classes)
+    - Channel schedule with base_c=64: [128, 64, 96, 128, 160, 256]
 
-Adaptations vs. paper:
-  - Paper uses 40 mel bins; we use 64.  The stem stride-2 on freq means
-    F: 64→32→16→8 across stages, which works cleanly.
-  - SubSpectralNorm uses S=5 (paper) regardless of input frequency bins.
-    S=5 gives 5 spectral groups; each group covers freq//5 bins within BN.
-    If freq is not divisible by 5, we fall back to plain BN for that layer.
-  - Paper uses num_classes=12 (GSC v1) or 35 (v2).  We use 35.
+  Upstream settings re-checked on 2026-10-20 against bcresnet.py,
+  subspectralnorm.py and utils.py (main branch): 40 mel bins, 12-class
+  label set (10 keywords + silence + unknown, for both GSC v1 and v2),
+  SubSpectralNorm(out_plane, 5) with per-sub-band affine ("Sub" mode),
+  and an assertion that the frequency size is divisible by the group count.
 
-Target: ~321 000 parameters ± 10% (288 900 – 353 100).
-Asserted at construction time; τ=8 verified to satisfy this range.
+  Deviations from the upstream 40-bin / 12-class configuration:
+    - Input: 64 mel bins (upstream: 40).  Frequency sizes seen by the SSN
+      layers are [32, 32, 16, 16, 8 × 8] (upstream: [20, 20, 10, 10, 5 × 8]).
+    - Classes: 35 (full GSC v2 label set; upstream trains the 12-class task).
+    - SubSpectralNorm sub-bands: S=8 (upstream: S=5).  S=5 does not divide
+      32/16/8.  S=8 reproduces upstream's per-stage sub-band width exactly
+      (4, 2, 1 frequency bins per sub-band at the 1st/2nd/3rd-4th stage
+      resolutions), at the cost of 8 rather than 5 sub-bands per layer.
+    - Classifier: the depthwise (5,5) conv without frequency padding maps
+      F=8 → 4 (upstream: F=5 → 1); the existing AdaptiveAvgPool averages
+      the remaining 4 rows.
+
+Target: 321,000 parameters ±10% (288,900 – 353,100).
+Assertion enforced at construction time.
 """
 from __future__ import annotations
 
@@ -47,29 +67,39 @@ import torch.nn.functional as F
 
 from fte_fl.models.base import FTEModel
 
+# Canonical configuration for this project's BC-ResNet model.
+# Corresponds to BC-ResNet-8 (τ=8) in Kim et al. 2021, base_c=64.
+BC_RESNET_TAU: int = 8
+
+# Number of SubSpectralNorm sub-bands for the 64-mel-bin input
+# (upstream uses 5 for 40 bins; see module docstring for the justification).
+SSN_SUBBANDS: int = 8
+
 
 class SubSpectralNorm(nn.Module):
-    """Normalize within sub-spectral frequency groups (Kim et al., 2021).
+    """Normalize within sub-spectral frequency groups (Chang et al., 2021).
 
-    Divides the F dimension into S groups, applies BatchNorm2d independently
-    per group.  S=5 matches the paper (5 sub-bands over 40 mel bins = 8
-    bins/group).  Falls back to plain BN when F % S ≠ 0.
+    Splits the F dimension into S contiguous sub-bands and applies BatchNorm2d
+    with a separate mean/variance and affine (γ, β) per (channel, sub-band),
+    matching the upstream "Sub" affine mode.  Like upstream, F must be
+    divisible by S; there is no plain-BN fallback.
     """
 
-    def __init__(self, num_channels: int, S: int = 5) -> None:
+    def __init__(self, num_channels: int, S: int = SSN_SUBBANDS) -> None:
         super().__init__()
         self.S = S
         self.num_channels = num_channels
         # BN over C*S "virtual channels" (each sub-band is a group)
         self.bn = nn.BatchNorm2d(num_channels * S)
-        # Fallback plain BN used when freq is not divisible by S
-        self.bn_plain = nn.BatchNorm2d(num_channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, freq, T = x.shape
         S = self.S
         if freq % S != 0:
-            return self.bn_plain(x)
+            raise ValueError(
+                f"SubSpectralNorm: frequency size {freq} is not divisible by "
+                f"S={S} sub-bands."
+            )
         # Reshape so BN sees C*S channels, each of size freq//S × T
         x = x.reshape(B, C * S, freq // S, T)
         x = self.bn(x)
@@ -122,7 +152,7 @@ class ConvBNBlock(nn.Module):
                       groups, bias=False)
         ]
         if norm == "ssn":
-            layers.append(SubSpectralNorm(out_c, S=5))
+            layers.append(SubSpectralNorm(out_c, S=SSN_SUBBANDS))
         elif norm == "bn":
             layers.append(nn.BatchNorm2d(out_c))
         if activation == "relu":
@@ -232,18 +262,27 @@ def _make_stage(
 
 
 class BCResNet1(FTEModel):
-    """BC-ResNet (τ=8, ~321 k params) for Speech Commands 35-class task.
+    """BC-ResNet-8 (τ=8, base_c=64) keyword-spotting model for Speech Commands.
 
-    The class is named BCResNet1 to satisfy the project filename convention.
-    The τ=8 width is the target-parameter configuration (see module docstring).
+    Despite the class name BCResNet1 (kept for project file-naming convention),
+    this implements the BC-ResNet-8 configuration — the ~321k-parameter variant
+    from Kim et al. 2021.  See the module docstring for the full naming
+    clarification and reference to the Qualcomm source code.
 
-    Target: 288 900 – 353 100 parameters.  Assertion enforced at construction.
+    Precise variant: BC-ResNet-8 adapted to 64 mel bins and 35 classes,
+    with SubSpectralNorm using S=8 sub-bands (upstream: S=5 at 40 bins).
+
+    Constructor argument `tau` defaults to 8 (BC-ResNet-8).  Setting tau=1
+    would give the much smaller BC-ResNet-1 variant (~10k params), which does
+    NOT meet the project's 321k ±10% parameter target.
+
+    Target: 288,900 – 353,100 parameters.  Assertion enforced at construction.
     """
 
     TARGET_PARAMS: int = 321_000
     TOLERANCE: float = 0.10
 
-    def __init__(self, num_classes: int = 35, tau: int = 8) -> None:
+    def __init__(self, num_classes: int = 35, tau: int = BC_RESNET_TAU) -> None:
         super().__init__()
 
         # Official mapping: base_c = tau * 8  (see Qualcomm repo main.py,
