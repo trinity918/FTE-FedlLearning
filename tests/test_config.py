@@ -34,6 +34,15 @@ def test_set_seed_reproducible():
     np.testing.assert_array_equal(a, b)
 
 
+def test_default_defense_name_is_a_registered_rule():
+    """The config uses the registry's canonical names (e.g. 'multi_krum')."""
+    from fte_fl.defenses.aggregators import RULES
+
+    cfg = Config.from_yaml(CONFIG_PATH)
+    assert cfg["defense"]["name"] == "multi_krum"
+    assert cfg["defense"]["name"] in RULES
+
+
 def test_config_to_dict_includes_reproducibility():
     cfg = Config.from_yaml(CONFIG_PATH)
     d = cfg.to_dict()

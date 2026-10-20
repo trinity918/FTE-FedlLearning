@@ -41,6 +41,18 @@ class CKKSManager:
             if len(chunk := vector[start : start + self.chunk_size]) > 0
         ]
 
+    def public_context_bytes(self, galois_keys: bool = True) -> bytes:
+        """Serialized copy of the context WITHOUT the secret key.
+
+        It keeps the public and relinearization keys, and the Galois keys if
+        `galois_keys` (needed for dot products; they dominate the size).
+        Holders can encrypt and evaluate additions and plaintext-scalar
+        products, but cannot decrypt.
+        """
+        public = self.context.copy()
+        public.make_context_public()
+        return public.serialize(save_galois_keys=galois_keys, save_relin_keys=True)
+
     def decrypt(self, encrypted_chunks: list) -> np.ndarray:
         """Decrypt chunks and concatenate them in their original order."""
         if not encrypted_chunks:
@@ -50,7 +62,10 @@ class CKKSManager:
         )
 
     def homomorphic_sum(self, encrypted_vectors: list[list]) -> list:
-        """Sum equally sized encrypted vectors without decrypting them."""
+        """Sum equally sized encrypted vectors without decrypting them.
+
+        The inputs are not modified (the running sum starts from a copy).
+        """
         if not encrypted_vectors:
             raise ValueError("At least one encrypted vector is required")
 
@@ -61,7 +76,7 @@ class CKKSManager:
         summed = []
         for chunk_index in range(expected_chunks):
             chunks = [vector[chunk_index] for vector in encrypted_vectors]
-            result = chunks[0]
+            result = chunks[0].copy()
             for chunk in chunks[1:]:
                 result += chunk
             summed.append(result)

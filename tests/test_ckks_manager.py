@@ -41,3 +41,26 @@ def test_rejects_non_finite_input(manager):
 def test_rejects_empty_sum(manager):
     with pytest.raises(ValueError):
         manager.homomorphic_sum([])
+
+
+def test_homomorphic_sum_does_not_modify_inputs(manager):
+    a, b = np.array([1.0, 2.0, 3.0]), np.array([10.0, 20.0, 30.0])
+    ea, eb = manager.encrypt(a), manager.encrypt(b)
+    total = manager.homomorphic_sum([ea, eb])
+    np.testing.assert_allclose(manager.decrypt(total), a + b, atol=1e-4)
+    np.testing.assert_allclose(manager.decrypt(ea), a, atol=1e-4)     # first input intact
+    np.testing.assert_allclose(manager.decrypt(eb), b, atol=1e-4)
+    assert total[0] is not ea[0]
+
+
+def test_public_context_cannot_decrypt(manager):
+    import tenseal as ts
+
+    public = ts.context_from(manager.public_context_bytes(galois_keys=False))
+    assert not public.is_private() and not public.has_galois_keys()
+    ct = ts.ckks_vector(public, [0.5, -0.5])
+    with pytest.raises(ValueError):
+        ct.decrypt()
+    back = ts.ckks_vector_from(manager.context, ct.serialize())
+    np.testing.assert_allclose(back.decrypt(), [0.5, -0.5], atol=1e-4)
+    assert ts.context_from(manager.public_context_bytes()).has_galois_keys()

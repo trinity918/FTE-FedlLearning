@@ -12,7 +12,9 @@ crypto:
   chunk_size: 8192
   numerical_tolerance: 0.001
 defense:
-  name: multikrum
+  # Must be a key of fte_fl.defenses.aggregators.RULES. Not read by any code
+  # yet; the simulator (Milestone 5) will consume these settings.
+  name: multi_krum
   byzantine_fraction: 0.2
 experiment:
   rounds: 25

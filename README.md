@@ -48,11 +48,11 @@ python -m pytest -v
 fte_fl/
     configs/      YAML experiment configs + config loader
     crypto/       CKKS chunked encrypt/decrypt/homomorphic-sum (TenSEAL)
-    defenses/     Krum + Multi-Krum (Blanchard 2017, Mhamdi 2018)
+    defenses/     FedAvg, Krum, Multi-Krum, trimmed mean, Bulyan; EtF/FTE protocols (Milestone 4)
     data/         Dataset loaders: FEMNIST, Speech Commands, CIFAR-100
     models/       Five model architectures (Milestone 2)
     attacks/      (Milestone 3) sign_flip, ALIE, DBA-style triggers, etc.
-    attest/       (Milestone 4) Pedersen commitment + Schnorr proof
+    attest/       (Milestone 4) Pedersen commitment + Schnorr-style proof of opening
     fl/           (Milestone 5) single-process FL simulator
     eval/         (Milestone 7) stats and paper artifacts
     experiments/  (Milestone 6) experiment matrix runner
@@ -168,6 +168,57 @@ These tests check function contracts on synthetic data only. No attack
 effectiveness has been measured. Only DBA's trigger decomposition is
 implemented; DBA's training schedule, update scaling and poisoning-per-batch
 procedure are not.
+
+## Defenses and Protocols (Milestone 4)
+
+Plaintext rules (`fte_fl/defenses/aggregators.py`; Krum scoring in `krum.py`).
+Each returns a `Selection` (per-client weights + optional coordinate mask);
+inputs are finite real (n, d) arrays.
+
+| Rule | Definition | Constraints (else error) |
+|---|---|---|
+| `fedavg` | weighted mean, weights normalised (default equal) | weights finite, ≥ 0, sum > 0 |
+| `krum` | update minimising the sum of squared distances to its n − f − 2 nearest neighbours; ties → smallest index | int f ≥ 0, n > 2f + 2 |
+| `multi_krum` | mean of the m best Krum scores (default m = n − f) | as Krum, 1 ≤ m ≤ n |
+| `trimmed_mean` | per coordinate: remove the b smallest and b largest values, mean of the other n − 2b | int b ≥ 0, n − 2b ≥ 1 |
+| `bulyan` | repeated Krum picks θ = n − 2f updates; per coordinate, mean of the β = n − 4f values closest to the (lower) median | int f ≥ 1, n ≥ 4f + 3 |
+
+Protocols (`fte_fl/defenses/protocols.py`):
+- **EtF** `run_etf` (fedavg, krum, multi_krum): clients encrypt → the server
+  computes encrypted pairwise squared distances → the key holder decrypts only
+  those and selects with Krum → the server sums the selected ciphertexts →
+  the key holder decrypts the aggregate.
+- **FTE** `run_fte` (all five rules): clients send plaintext to a filter →
+  the filter selects → selected clients encrypt their weighted, masked
+  contributions → the server sums → the key holder decrypts.
+- **FTE + attestation** `run_fte_attested`: FTE preceded by a Pedersen
+  commitment to each update's SHA-256 digest and a Schnorr-style (Okamoto,
+  Fiat–Shamir) proof of knowledge of its opening (`fte_fl/attest/pedersen.py`).
+  The filter checks each proof and that the plaintext it receives opens the
+  commitment.
+
+Limitations:
+- All parties run in one process with a single trusted key holder.
+- The server holds no secret key and cannot decrypt (tested). Message order
+  is recorded by the simulation itself.
+- In FTE the filter sees every update in plaintext. EtF decrypts pairwise
+  distances to filter, so neither is a fully homomorphic robust aggregation.
+- CKKS is approximate (squared-distance error up to ~4e-6 observed), so EtF
+  can select differently from plaintext Krum near score ties.
+- Attestation does not prove that a ciphertext matches the committed update,
+  that filtering was correct, or that an update is valid, and it gives no
+  privacy from the filter. Binding, hiding, soundness and zero knowledge are
+  standard assumptions, not tested properties.
+- Robustness has not been measured in training. The Speech Commands
+  speaker-split limitation (Milestone 1) is still open.
+
+Details and caveats: `results/PAPER_NOTES.md`.
+
+```bash
+python -m pytest -v tests/test_krum.py tests/test_aggregators.py tests/test_attest.py tests/test_protocols.py
+```
+
+No defense has been evaluated in training; the tests use synthetic data.
 
 ## Datasets
 

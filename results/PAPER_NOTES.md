@@ -300,6 +300,182 @@ later milestones.
 
 ---
 
+## Milestone 4: Aggregation Defenses and Protocols — Definitions and Caveats
+
+Implemented in `fte_fl/defenses/` (`krum.py`, `aggregators.py`,
+`protocols.py`), `fte_fl/attest/pedersen.py`, and `fte_fl/crypto/ckks_manager.py`;
+tested with synthetic data in `tests/test_krum.py`, `test_aggregators.py`,
+`test_attest.py`, `test_protocols.py`, `test_ckks_manager.py` and
+`test_config.py`. **No
+defense has been run in federated training; nothing here measures robustness,
+accuracy or attack success.** All protocol roles run in one Python process.
+
+### Plaintext rules (`aggregators.py`)
+
+Each rule returns a `Selection` (per-client weights a, optional boolean
+per-coordinate mask M) with aggregate = Σ_i a_i (M_i ⊙ u_i). Updates: real,
+finite, (n, d) arrays; inputs are not modified; output is float64.
+
+| Rule | Definition implemented | Constraints enforced | Source (checked 2026-10-20) |
+|---|---|---|---|
+| `fedavg` | Σ (w_i / Σw) u_i; default equal weights | w finite, ≥ 0, Σw > 0 | McMahan et al., AISTATS 2017 (standard; not re-checked this milestone) |
+| `krum` | argmin of s(i) = Σ of the n−f−2 smallest **squared** distances; ties → smallest index | int f ≥ 0, n > 2f+2 | Blanchard et al., NeurIPS 2017, Sec. 4 (proceedings PDF) |
+| `multi_krum` | mean of the m best-scoring updates, one pass; default m = n−f | 1 ≤ m ≤ n | same paper, Sec. 6 (m ∈ {1..n}; experiments use m = n−f) |
+| `trimmed_mean` | per coordinate independently: sort the n values, remove the b smallest **and** the b largest (2b removed), return the arithmetic mean of the remaining n−2b (sum ÷ (n−2b)) | int b ≥ 0, n−2b ≥ 1 | Yin, Chen, Ramchandran, Bartlett, ICML 2018 (PMLR 80), Def. 2 (divisor (1−2β)m) |
+| `bulyan` | θ = n−2f via repeated Krum with removal; per coordinate, mean of the β = θ−2f values of S closest to the median | int f ≥ 1, n ≥ 4f+3 | El Mhamdi, Guerraoui, Rouault, ICML 2018 (PMLR 80), Sec. 4 |
+
+- Trimmed mean takes a per-side **count** b (the paper's βn). b = 0 is the
+  plain mean; the largest valid b is ⌊(n−1)/2⌋ (for odd n, n−2b = 1 gives
+  the coordinate-wise median). Robustness needs b ≥ the number of Byzantine
+  clients (paper: β ≥ α); the caller chooses b.
+- Bulyan, checked against the paper and against the Krum routine actually
+  called. Supported: int f ≥ 1 and n ≥ 4f+3 (minimum n = 7, 11, 15 for
+  f = 1, 2, 3); θ = n−2f is the size of the selection set S; β = n−4f ≥ 3
+  values are averaged per coordinate. Adaptations:
+  (1) The selection step scores the remaining set R with Krum's formula,
+  k = |R|−f−2 nearest neighbours (n replaced by |R|), via
+  `scores_from_distances`; |R| runs from n down to 2f+1. The paper claims a
+  quorum of 2f+3 for every use of Krum, but its last two iterations see
+  |R| = 2f+2 and 2f+1, where Krum's own condition |R| > 2f+2 fails (so the
+  validating `krum_from_distances` cannot be used there, and Krum's guarantee
+  does not cover those two steps). We keep the same formula there; the only
+  clamp, k = max(·, 1), fires solely for f = 1 at |R| = 3 (0 → 1). A test
+  records every step's (|R|, k).
+  (2) The paper's median is an argmin over values of S; for even θ both
+  middle values minimise, and we take the lower. (3) Ties among distances to
+  the median go to the smaller client index. f = 0 is rejected.
+- Tests compare FedAvg, trimmed mean and Bulyan with hand computations and
+  with independent reference implementations written from the definitions.
+- Configuration: `fte_fl/configs/default.yaml` now names the defense
+  `multi_krum` (previously `multikrum`), the canonical key of
+  `aggregators.RULES`; a test enforces this. No code reads the `defense`
+  settings yet (the simulator, Milestone 5, will); `byzantine_fraction` is
+  likewise unused.
+
+### Krum / Multi-Krum audit (existing `krum.py`)
+
+- The old docstring said the paper uses plain Euclidean distance and that
+  squaring was an optimisation. **Incorrect:** the NeurIPS 2017 score is
+  defined with squared distances; the implementation was already faithful,
+  the docstring is corrected.
+- The old docstring attributed Multi-Krum to "Mhamdi et al., ICDCS 2018".
+  **Incorrect:** Multi-Krum is defined in Blanchard et al., NeurIPS 2017;
+  El Mhamdi et al. (Bulyan) appeared at ICML 2018.
+- **Behaviour change:** `multi_krum` previously restricted m to [1, n−f−2]
+  and defaulted to n−f−2, which is not from the paper. It now accepts
+  m ∈ [1, n] and defaults to m = n−f (the paper's experimental setting).
+  The existing test of the default was updated accordingly.
+- `f` must now be an int (floats/bools raise `TypeError`). Distance and
+  selection steps are exposed (`pairwise_squared_distances`,
+  `krum_from_distances`, `multi_krum_from_distances`) so that plaintext
+  Krum, Bulyan and EtF share one selection code path.
+- Distances use |a|²+|b|²−2a·b in float64 (clipped at 0), which can lose
+  precision for nearly identical, large-norm vectors; tests compare against a
+  direct difference-based reference on well-conditioned data only.
+
+### CKKS manager fix
+
+`CKKSManager.homomorphic_sum` previously added in place into the first
+input's ciphertext chunks (TenSEAL `+=` is in-place), silently changing the
+caller's first encrypted vector. It now starts from a copy; a regression test
+checks that inputs are unchanged. `public_context_bytes()` was added: a
+serialized context without the secret key (optionally without Galois keys).
+
+### Protocol data flows (`protocols.py`)
+
+Roles: clients; a single trusted **key holder** with the CKKS secret key
+(the only role that decrypts; no threshold decryption); the **aggregator**
+(server), built from a serialized public context; in FTE, a **filter** that
+receives plaintext. All roles run in one Python process with no network.
+
+- **EtF (encrypt, then filter)**, `run_etf`, rules fedavg / krum / multi_krum:
+  1. client i → aggregator: Enc(u_i) (serialized chunks).
+  2. aggregator: Enc(‖u_i − u_j‖²) for all i < j by homomorphic subtraction
+     and dot product, summed over chunks.
+  3. aggregator → key holder: encrypted distances; the key holder decrypts
+     **only these**, runs Krum / Multi-Krum on them, and returns the selection.
+  4. aggregator: Σ w_i Enc(u_i) with plaintext weights.
+  5. aggregator → key holder: Enc(aggregate); decrypted.
+  FedAvg skips steps 2–3. Trimmed mean and Bulyan are rejected (they need
+  coordinate-wise comparisons, which CKKS does not provide here).
+- **FTE (filter, then encrypt)**, `run_fte`, any of the five rules:
+  1. client i → filter: plaintext u_i.
+  2. filter: Selection (a, M) computed in plaintext; → each contributing
+     client: its a_i and M_i.
+  3. contributing client i → aggregator: Enc(a_i (M_i ⊙ u_i)); clients that
+     do not contribute send nothing.
+  4. aggregator: homomorphic sum; → key holder: Enc(aggregate); decrypted.
+- **FTE + attestation**, `run_fte_attested`: before step 1 each client
+  publishes (C_i, proof_i) to the filter and aggregator; in step 1 it also
+  sends its opening. The filter excludes client i unless proof_i verifies
+  under (round, i) and the opening opens C_i with m = digest(u_i). The
+  aggregator re-verifies each contributor's public proof.
+
+### CKKS approximation and near ties
+
+CKKS is approximate. Observed: absolute error up to ~4e-6 on decrypted
+squared distances in the tests (ring degree 8192; ~5e-4 relative for nearly
+identical updates), and up to ~1.5e-6 on aggregates in development runs
+(ring degrees 8192 and 16384; the tests allow 1e-4). EtF therefore selects from
+**approximate** distances: when plaintext Krum scores are tied or nearly
+tied (gap below roughly (n−f−2) × the distance error), the EtF selection can
+differ from plaintext Krum. Tests that expect identical selections first
+assert that the plaintext score gaps exceed 1e-4; a separate test builds an
+exact plaintext tie and asserts only that EtF picks one of the tied clients.
+No exact equivalence between CKKS and plaintext aggregation is claimed.
+
+### Guarantees: enforced, simulated, assumed, missing
+
+1. **Enforced by code and verified by tests (real arithmetic, no mocks):**
+   - The aggregator holds no secret key: it is built from serialized public
+     context bytes, a context containing the secret key is rejected, and
+     TenSEAL raises on decryption there. It accepts only serialized
+     ciphertexts (plaintext arrays raise `TypeError`).
+   - EtF and FTE aggregates equal the plaintext rules within CKKS tolerance;
+     EtF uses the Krum selection computed from the decrypted distances.
+   - `CKKSManager.homomorphic_sum` no longer modifies its inputs.
+   - Pedersen commitments C = g^m h^r mod p in the order-q subgroup of the
+     RFC 3526 2048-bit MODP group (tests check p is a 2048-bit safe prime and
+     g = 2 and h have order q); m = SHA-256 of the update's exact float64
+     bytes. Honest openings verify; altered updates and wrong openings fail.
+   - Okamoto/Schnorr-style Fiat–Shamir proofs of knowledge of (m, r), bound
+     to a context (round id, client id): honest proofs verify; altered,
+     random, wrong-round, replayed-under-another-client and non-group proofs
+     fail. In `run_fte_attested` the filter rejects a client whose plaintext
+     differs from its commitment even when its proof is valid (the opening
+     check is not skipped), and contributor indices map to original clients.
+   - Sigma-protocol structure: special-soundness extraction and the
+     honest-verifier simulation equation hold (interactive protocol).
+2. **Demonstrated only by the in-process simulation / transcript:** the
+   separation of parties (one process, no network), who sends what to whom
+   and in which order (the transcript is recorded by the protocol code
+   itself, so it documents but does not independently enforce the flow),
+   the single trusted key holder, and honest clients that encrypt exactly
+   their filtered contribution.
+3. **Assumed, not established by tests:** computational binding of the
+   commitment (discrete-log hardness in this group, log_g h unknown, SHA-256
+   collision resistance), perfect hiding (uniform r from `secrets`), and
+   soundness and zero knowledge of the Fiat–Shamir proof (random-oracle
+   model); also CKKS/RLWE semantic security of TenSEAL with these parameters
+   (not evaluated here).
+4. **Missing guarantees (not implemented):** any proof that a CKKS ciphertext
+   encrypts the committed or the filtered update; any proof that the filter
+   applied its rule correctly; any update-validity check (e.g. norm bounds);
+   privacy from the filter in FTE (it sees every plaintext update and
+   opening); privacy of pairwise distances from the key holder in EtF; and
+   protection against a key holder who decrypts individual ciphertexts.
+
+### Not implemented in Milestone 4 / outstanding
+
+Threshold or multi-party decryption, encrypted coordinate-wise filtering,
+ciphertext–commitment consistency proofs, verifiable filtering, network or
+timing simulation, client sampling, training loops, code that reads the
+`defense` config settings, and any experiment. **Robustness of any defense
+has not been measured in training.** The Milestone 1 limitation remains open:
+the Speech Commands loader does not enforce the official speaker split.
+
+---
+
 ## Milestone 1 Dataset Findings (carried forward)
 
 ### FEMNIST
@@ -329,4 +505,5 @@ later milestones.
   this study and are not referenced or reproduced here.
 - No model accuracy results have been measured yet (experiments are Milestone 6).
 - No federated training or attack/defense evaluation has occurred yet. Attack
-  functions exist (Milestone 3) but have not been run in any experiment.
+  functions (Milestone 3) and defenses/protocols (Milestone 4) exist but have
+  not been run in any experiment.
