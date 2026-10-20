@@ -51,7 +51,7 @@ fte_fl/
     defenses/     Krum + Multi-Krum (Blanchard 2017, Mhamdi 2018)
     data/         Dataset loaders: FEMNIST, Speech Commands, CIFAR-100
     models/       Five model architectures (Milestone 2)
-    attacks/      (Milestone 3) sign_flip, ALIE, DBA, etc.
+    attacks/      (Milestone 3) sign_flip, ALIE, DBA-style triggers, etc.
     attest/       (Milestone 4) Pedersen commitment + Schnorr proof
     fl/           (Milestone 5) single-process FL simulator
     eval/         (Milestone 7) stats and paper artifacts
@@ -148,6 +148,26 @@ of CKKS ciphertext chunks needed to encrypt one model update.
 - The frozen backbone is **random**: patch/positional embeddings, CLS token and
   blocks 0–5 never train. This is LoRA on random features, not fine-tuning.
 - References: Gong et al., Interspeech 2021 (arXiv:2104.01778); Hu et al. (LoRA).
+
+## Attacks (Milestone 3)
+
+Pure functions, independent of the (future) simulator; inputs are never
+modified. Definitions, citations and caveats: `results/PAPER_NOTES.md`.
+
+| Module | Operates on | Functions |
+|---|---|---|
+| `fte_fl/attacks/updates.py` | one client's 1-D float update tensor | `sign_flip`, `scaling` (γ=10), `zero_update`, `gaussian_noise` (replaces the update; explicit `std`, `seed`), `alie` (μ − z·σ, z=1), helpers `estimate_mean_std` (sample std), `alie_z_max` |
+| `fte_fl/attacks/labels.py` | a malicious client's local training labels | `flip_labels` (targeted source→target), `backdoor_labels` (target class 0) |
+| `fte_fl/attacks/triggers.py` | a malicious client's local training inputs | 4-part triggers: `apply_image_trigger` (DBA-style; CIFAR-100, FEMNIST; unnormalized [0, 1] images), `apply_speech_trigger` (DBA-inspired feature-space adaptation: a 1 kHz tone constructed directly in log-mel space, not injected as a physical waveform) |
+
+```bash
+python -m pytest -v tests/test_attacks.py
+```
+
+These tests check function contracts on synthetic data only. No attack
+effectiveness has been measured. Only DBA's trigger decomposition is
+implemented; DBA's training schedule, update scaling and poisoning-per-batch
+procedure are not.
 
 ## Datasets
 

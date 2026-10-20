@@ -160,6 +160,146 @@ fundamental differences that invalidate direct comparison with AST results):**
 
 ---
 
+## Milestone 3: Byzantine Attacks — Definitions and Caveats
+
+Implemented in `fte_fl/attacks/` (`updates.py`, `labels.py`, `triggers.py`) and
+tested in `tests/test_attacks.py` with synthetic tensors only. **No attack has
+been run in federated training. Unit tests establish that each function
+follows its stated contract; they establish nothing about attack effectiveness,
+attack success rate, or accuracy impact.**
+
+### Model-update attacks (operate on one client's flat update vector)
+
+Input contract for all: a non-empty, finite, 1-D float32/float64 `torch.Tensor`
+(e.g. `trainable_vector()`); output is a new tensor with the same shape,
+dtype and device; the input is never modified.
+
+| Function | Definition | Parameters / defaults |
+|---|---|---|
+| `sign_flip(u)` | `-u` | — |
+| `scaling(u, gamma)` | `gamma * u`; raises on overflow | `gamma=10.0`, must be finite and > 0 |
+| `zero_update(u)` | all zeros, same shape/dtype/device | — |
+| `gaussian_noise(u, std, seed)` | **replaces** `u` with i.i.d. N(0, std²) noise; `u`'s values are not used | `std` required (no default), > 0; `seed` required, drawn from a private `torch.Generator` (global RNG untouched) |
+| `alie(mu, sigma, z)` | `mu - z * sigma` coordinate-wise | `z=1.0` (project default), any finite `z`; `sigma >= 0`; `sigma = 0` returns `mu` exactly |
+| `estimate_mean_std(updates)` | coordinate-wise mean and **sample** std (ddof=1) of a supplied (k, d) tensor, k >= 2 | optional helper for ALIE |
+| `alie_z_max(n, m)` | NeurIPS z_max = Φ⁻¹((n − m − s)/(n − m)), s = ⌊n/2 + 1⌋ − m | optional helper; requires 1 ≤ s ≤ n − m − 1 |
+
+The Gaussian-noise distribution and scale are not claimed to be optimal or
+realistic; no default scale has been justified.
+
+### ALIE
+
+- Citation (verified 2026-10-20 against the NeurIPS proceedings page and
+  PDF, and arXiv:1902.06156): Gilad Baruch, Moran Baruch, Yoav Goldberg,
+  "A Little Is Enough: Circumventing Defenses For Distributed Learning",
+  NeurIPS 2019. The proceedings list the authors in that order; arXiv lists
+  Moran Baruch first.
+- **Source of the implemented equations: the NeurIPS 2019 proceedings PDF**
+  (Algorithm 3 and Sec. 3.3, checked 2026-10-20). Algorithm 3:
+  s = ⌊n/2 + 1⌋ − m (line 1); z_max = max z such that
+  Φ(z) < (n − m − s)/(n − m) (line 2); per coordinate, the corrupted
+  workers compute μ_j and σ_j (lines 3–4) and all send
+  **(p_mal)_j = μ_j − z_max·σ_j** (line 5). Sec. 3.1 states that the
+  corrupted workers' data alone suffices to estimate μ and σ. The paper does
+  not state a population/sample std convention. Worked example (Sec. 3.3):
+  n = 50, m = 24, s = 2, (50 − 24 − 2)/(50 − 24) = 0.923, z_max = 1.43,
+  value μ_j − 1.43·σ_j (`alie_z_max(50, 24)` = 1.4261).
+- **The arXiv rendering (ar5iv) differs and is not used here:** it states the
+  threshold Φ(z) < (n − s)/n (worked example 0.96, z_max = 1.75) and writes
+  μ_j + z_max·σ_j. The two thresholds give different z_max for the same
+  n and m; they are not interchangeable.
+- This project: `alie` computes **μ − z·σ**, i.e. NeurIPS line 5 with z in
+  place of z_max; a negative z moves the output the other way (μ + |z|·σ).
+  `z = 1.0` is a configurable project default, not the paper's setting; the
+  paper's z_max is computed from n and m by `alie_z_max`, valid for
+  1 ≤ s ≤ n − m − 1 (so the probability lies strictly in (0, 1)); outside
+  that range it raises. z_max ≤ 0 when the probability is ≤ 0.5.
+  `alie` receives only the attacker's μ and σ; it cannot read other clients'
+  updates. If statistics are estimated with `estimate_mean_std`, the caller
+  must supply only updates the attacker legitimately holds (e.g. the colluding
+  malicious clients' own current-round updates); the simulator (Milestone 5)
+  must enforce this — no honest-client or future-round information.
+
+### Label poisoning (operates on a malicious client's local training labels)
+
+- `flip_labels(labels, source_class, target_class, num_classes)`: targeted
+  mapping source → target; every other label is unchanged. Not a permutation.
+- `backdoor_labels(labels, num_classes, target_class=0)`: sets the given
+  labels to the target class; used together with, but separately from,
+  trigger insertion.
+- Labels: 0-D/1-D integer `torch.Tensor` or `numpy.ndarray`, all values in
+  [0, num_classes); a new object is returned. Applying these only to a
+  malicious client's local training data (never to test/evaluation data) is
+  the simulator's responsibility.
+
+### DBA-style backdoor triggers (operate on local training inputs)
+
+- Citation (verified via the official repository README,
+  github.com/AI-secure/DBA): Chulin Xie, Keli Huang, Pin-Yu Chen, Bo Li,
+  "DBA: Distributed Backdoor Attacks against Federated Learning", ICLR 2020.
+  The OpenReview page could not be read (browser verification), so the venue
+  is confirmed from the repository citation only.
+- Scope: only DBA's **trigger decomposition** is implemented. DBA's training
+  schedule, model-update scaling, and poisoning-per-batch procedure are not
+  implemented in Milestone 3, so nothing here is an exact DBA reproduction.
+  The image triggers are DBA-style; the speech trigger is DBA-inspired.
+- Distributed structure: the global trigger is the union of 4 local triggers.
+  Malicious client i trains with local part i; the global trigger
+  (`parts=None`) is the one evaluated at test time (DBA's
+  `centralized_test_trigger`). Sequential application of parts equals the
+  union (tested). Assigning parts to clients is the simulator's job.
+- Image triggers (`apply_image_trigger`), on unnormalized [0, 1] float
+  tensors (C, H, W) or (N, C, H, W); inputs outside [0, 1] are rejected, so
+  the trigger must be applied before any normalization:
+  - CIFAR-100: pixel coordinates copied from DBA's `cifar_params.yaml`
+    (four 1×6 bars, rows 0 and 4, columns 0–5 and 9–14), set to 1.0 in all
+    three channels. DBA's `image_helper.py` loads CIFAR with `ToTensor()`
+    only (no `Normalize`), so DBA's value 1 is already white in [0, 1]; this
+    project uses the same value in the same representation. The CIFAR-100
+    loader currently returns PIL images; `to_tensor` conversion to [0, 1] is
+    assumed.
+  - FEMNIST: coordinates copied from DBA's `mnist_params.yaml` (four 1×4
+    bars, rows 0 and 3, columns 0–3 and 6–9), set to **0.0** (a dark patch).
+    Adaptation: DBA writes 1 (white) on un-normalized MNIST (its `Normalize`
+    line is commented out), i.e. white on a black background, whereas the
+    loaded LEAF FEMNIST images have a predominantly white background with
+    dark ink, so a white trigger would be invisible. Audit observation
+    (read-only probe on 2026-10-20, not a test-suite guarantee; the offline
+    tests use synthetic images): 1,611 samples from one LEAF train file
+    loaded via `FemnistDataset` had 89.0% of pixels exactly 1.0, 99.8% of
+    samples had an all-1.0 trigger region (minimum 0.77), and the trigger
+    changed exactly the 16 mask pixels per sample, all to 0.0.
+- Speech Commands (`apply_speech_trigger`): **DBA-inspired feature-space
+  adaptation, not a physical waveform.** The trigger is constructed directly
+  in log-mel space; no waveform is injected during training. The loader
+  yields only log-mel features x = log(mel + 1e-6), shape (1, 64, 101). The
+  trigger adds the steady-state mel magnitude T of a 1 kHz tone
+  (peak amplitude 0.1 ≈ −20 dBFS by default, a project choice) in the linear
+  domain: x' = log(exp(x) + T) where T > 0, bit-exact x elsewhere. 1 kHz is
+  exactly FFT bin 25 (n_fft = 400, 16 kHz); with the loader's periodic Hamming
+  window the tone's STFT magnitude is 0.27·A·N at bin 25 and 0.115·A·N at bins
+  24 and 26, exactly zero elsewhere, so T occupies mel rows 21–23 only.
+  A test feeds a synthetic 1 kHz tone through the loader's own
+  `wav_to_logmel` and confirms the trigger applied to silence reproduces it
+  (linear-domain atol 1e-3, frames 2–98). Approximations: magnitudes are
+  added, ignoring phase interaction with speech; the tone is idealized as
+  steady in every frame (no onset/offset or edge-padding effects). Local
+  parts are 4 contiguous time segments (26/25/25/25 frames) — a project
+  adaptation, since DBA has no audio setting. Input validation only rejects
+  values below the log(1e-6) floor; standardized features lie above it and
+  are not detected, so the trigger must be applied before any normalization.
+  Trigger stealth or audibility has not been evaluated.
+
+### Not implemented in Milestone 3
+
+Client selection, attack scheduling (including DBA's training schedule and
+model-update scaling), number of poisoned samples per batch (DBA used
+`poisoning_per_batch`), aggregation/defenses, training,
+configuration fields for attacks, and any experiment. These belong to
+later milestones.
+
+---
+
 ## Milestone 1 Dataset Findings (carried forward)
 
 ### FEMNIST
@@ -188,4 +328,5 @@ fundamental differences that invalidate direct comparison with AST results):**
 - The EEG legacy experiments from `majorproj/fl_byzantine` are NOT part of
   this study and are not referenced or reproduced here.
 - No model accuracy results have been measured yet (experiments are Milestone 6).
-- No federated training or attack/defense evaluation has occurred yet.
+- No federated training or attack/defense evaluation has occurred yet. Attack
+  functions exist (Milestone 3) but have not been run in any experiment.
