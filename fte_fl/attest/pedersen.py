@@ -59,7 +59,7 @@ P = int(
 )
 Q = (P - 1) // 2
 G = 2
-_ELEMENT_BYTES = (P.bit_length() + 7) // 8
+ELEMENT_BYTES = (P.bit_length() + 7) // 8
 
 _H_LABEL = b"fte-fl/attest/pedersen/h/v1"
 _DIGEST_DOMAIN = b"fte-fl/attest/update-digest/v1"
@@ -156,7 +156,7 @@ def verify_opening(commitment: int, update, opening: Opening) -> bool:
 
 def _challenge(commitment: int, t: int, context: bytes) -> int:
     data = _CHALLENGE_DOMAIN + b"".join(
-        x.to_bytes(_ELEMENT_BYTES, "big") for x in (G, H, commitment, t)
+        x.to_bytes(ELEMENT_BYTES, "big") for x in (G, H, commitment, t)
     ) + len(context).to_bytes(8, "big") + context
     return int.from_bytes(hashlib.sha256(data).digest(), "big") % Q
 

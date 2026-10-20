@@ -113,6 +113,17 @@ def dirichlet_partition(
     return [np.array(sorted(p), dtype=np.int64) for p in partitions]
 
 
+def iid_partition(num_samples: int, num_clients: int, seed: int = 42) -> list[np.ndarray]:
+    """IID partition: a seeded permutation split into num_clients near-equal parts.
+
+    Client sizes differ by at most one; every index appears exactly once.
+    """
+    if num_clients < 1 or num_samples < num_clients:
+        raise ValueError(f"need 1 <= num_clients <= num_samples, got {num_clients}, {num_samples}")
+    perm = np.random.default_rng(seed).permutation(num_samples)
+    return [np.sort(p).astype(np.int64) for p in np.array_split(perm, num_clients)]
+
+
 def superclass_partition(
     labels: np.ndarray,
     num_clients: int,
@@ -163,7 +174,7 @@ def build_cifar100_clients(
         root: Cache directory for torchvision.
         num_clients: Number of federated clients.
         alpha: Dirichlet alpha (used when split='dirichlet').
-        split: 'dirichlet' or 'superclass'.
+        split: 'dirichlet', 'superclass' or 'iid'.
         seed: Random seed.
         train: Whether to load train or test set.
         download: Whether to download if absent.
@@ -174,13 +185,15 @@ def build_cifar100_clients(
     from torchvision.datasets import CIFAR100
 
     # Validate split before attempting dataset load
-    if split not in ("dirichlet", "superclass"):
-        raise ValueError(f"Unknown split: {split!r}. Use 'dirichlet' or 'superclass'.")
+    if split not in ("dirichlet", "superclass", "iid"):
+        raise ValueError(f"Unknown split: {split!r}. Use 'dirichlet', 'superclass' or 'iid'.")
 
     dataset = CIFAR100(root=root, train=train, download=download)
     labels = np.array(dataset.targets, dtype=np.int64)
 
-    if split == "dirichlet":
+    if split == "iid":
+        partitions = iid_partition(len(labels), num_clients, seed=seed)
+    elif split == "dirichlet":
         partitions = dirichlet_partition(
             labels, num_clients, alpha, num_classes=100, seed=seed
         )

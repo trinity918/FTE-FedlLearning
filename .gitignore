@@ -24,6 +24,9 @@ fte_fl/results/*.png
 fte_fl/results/*.pdf
 fte_fl/results/*.csv
 
+# Simulator runs (metrics, manifests, checkpoints): generated, never committed
+results/runs/
+
 # Scratch / audit files
 audit_*.py
 *.log

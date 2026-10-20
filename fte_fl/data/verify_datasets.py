@@ -79,30 +79,26 @@ def verify_femnist(seed: int):
 def verify_speech(seed: int):
     """Verify Speech Commands dataset: counts, shapes, speaker info."""
     from fte_fl.data.speech_commands import (
-        build_speech_clients, list_speakers, SPEECH_LABELS,
+        build_speech_clients, list_speakers, official_split_files, speaker_of, SPEECH_LABELS,
     )
 
     print("\n" + "=" * 60)
     print("Speech Commands v0.02")
     print("=" * 60)
 
-    try:
-        speakers = list_speakers(SPEECH_COMMANDS_DIR)
-    except Exception as e:
-        print(f"  ERROR: {e}")
-        return
-
+    speakers = list_speakers(SPEECH_COMMANDS_DIR)
     print(f"  Path: {SPEECH_COMMANDS_DIR}")
     print(f"  Total unique speakers: {len(speakers)}")
     print(f"  Labels: {len(SPEECH_LABELS)} words")
 
-    try:
-        clients = build_speech_clients(SPEECH_COMMANDS_DIR, num_clients=800, seed=seed)
-    except Exception as e:
-        print(f"  ERROR building clients: {e}")
-        return
+    # Official partition (validation_list.txt / testing_list.txt); raises on
+    # missing lists or speaker overlap.
+    for split, files in official_split_files(SPEECH_COMMANDS_DIR).items():
+        print(f"  Official {split}: {len(files)} clips, "
+              f"{len({speaker_of(f) for f in files})} speakers")
 
-    print(f"  Requested clients: 800")
+    clients = build_speech_clients(SPEECH_COMMANDS_DIR, num_clients=800, seed=seed)
+    print(f"  Requested clients: 800 (training speakers only)")
     print(f"  Available clients: {len(clients)}")
     total_samples = sum(len(ds) for ds in clients.values())
     print(f"  Total samples: {total_samples}")

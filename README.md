@@ -53,10 +53,12 @@ fte_fl/
     models/       Five model architectures (Milestone 2)
     attacks/      (Milestone 3) sign_flip, ALIE, DBA-style triggers, etc.
     attest/       (Milestone 4) Pedersen commitment + Schnorr-style proof of opening
-    fl/           (Milestone 5) single-process FL simulator
+    fl/           (Milestone 5) single-process FL simulator: config validation,
+                  update vectors, data, attacks, aggregation, metrics, loop
     eval/         (Milestone 7) stats and paper artifacts
-    experiments/  (Milestone 6) experiment matrix runner
+    experiments/  run.py: run one simulation from a YAML config (Milestone 5)
     results/      generated metrics, plots, PAPER_NOTES.md
+results/runs/    simulator outputs (git-ignored)
 tests/           pytest suite (unit + realdata-marked real-data tests)
 ```
 
@@ -209,8 +211,7 @@ Limitations:
   that filtering was correct, or that an update is valid, and it gives no
   privacy from the filter. Binding, hiding, soundness and zero knowledge are
   standard assumptions, not tested properties.
-- Robustness has not been measured in training. The Speech Commands
-  speaker-split limitation (Milestone 1) is still open.
+- Robustness has not been measured in training.
 
 Details and caveats: `results/PAPER_NOTES.md`.
 
@@ -218,7 +219,90 @@ Details and caveats: `results/PAPER_NOTES.md`.
 python -m pytest -v tests/test_krum.py tests/test_aggregators.py tests/test_attest.py tests/test_protocols.py
 ```
 
-No defense has been evaluated in training; the tests use synthetic data.
+## Simulator (Milestone 5)
+
+One simulation per command; everything is read from the YAML config, and
+`--set` overrides dotted keys (values parsed as YAML):
+
+```bash
+python -m fte_fl.experiments.run --config fte_fl/configs/default.yaml \
+    --run-dir results/runs/<name> \
+    --set experiment.rounds=2 --set defense.name=krum --set defense.f=2
+# continue an interrupted run (same config, same run dir):
+python -m fte_fl.experiments.run --config ... --run-dir results/runs/<name> --resume
+```
+
+An existing non-empty run directory is never overwritten (error unless
+`--resume`, which also checks the config hash). Output files:
+
+| File | Contents |
+|---|---|
+| `config.json` | raw config + hash, parsed settings, Python/package versions, git commit and whether tracked files were modified, model parameter counts, CKKS parameters, threat model |
+| `manifest.json` | client ids and sample counts, partition id, malicious clients, poisoning record, evaluation-set sizes |
+| `metrics.jsonl` | one record per round (below) |
+| `checkpoint.pt` | global vector after the last completed round |
+| `summary.json` | `running` / `completed` / `failed` (+ error and traceback) |
+
+**Config** (`fte_fl/configs/default.yaml`, validated by `fte_fl/fl/config.py`;
+unknown keys and invalid combinations raise, nothing is switched silently):
+- `runtime`: `device` (cpu only), `torch_threads` (default 4; results
+  reproduce bitwise only at the same thread count; on this 8-CPU WSL2
+  machine 8 threads was 5–30× slower than 4).
+- `experiment`: `dataset`, `model` (pairs: femnist–cnn_small;
+  speech_commands–bc_resnet1/lora_ast; cifar100–vit_tiny/lora_vit;
+  synthetic–mlp, test only), `rounds`, `clients_per_round`, `local_epochs`,
+  `batch_size`, `optimizer` (sgd only), `lr`, `momentum`, `weight_decay`,
+  `protocol` (`plaintext`, `etf`, `fte`, `fte_attested`), `eval_batch_size`,
+  `max_eval_samples`.
+- `defense`: `name` (a key of `aggregators.RULES`), `f` (krum, multi_krum,
+  bulyan), `b` (trimmed_mean), `m` (multi_krum), `fedavg_weighting`
+  (`samples` or `uniform`). Budgets are checked against `clients_per_round`
+  (Krum n > 2f+2, trimmed mean n − 2b ≥ 1, Bulyan f ≥ 1 and n ≥ 4f+3); EtF
+  rejects trimmed_mean and bulyan.
+- `attack`: `type` (`none`, `sign_flip`, `scaling`, `zero`, `gaussian`,
+  `alie`, `label_flip`, `backdoor`), `num_malicious` (fixed set for the run),
+  `start_round`, `seed`, and per-type parameters (`gamma`, `std`, `z` or
+  `"z_max"`, `source_class`/`target_class`, `poison_fraction`,
+  `trigger_mode` `distributed`/`global`, `speech_amplitude`/`speech_freq_hz`).
+  Each type accepts only its own parameters.
+- `datasets.<name>`: paths, `num_clients`, partition (CIFAR-100: `iid`,
+  `dirichlet` + `alpha`, `superclass`), optional `max_samples_per_client`.
+
+**Round** (`fte_fl/fl/simulator.py`): seeded uniform client sampling → local
+SGD from the global model (fresh optimizer per round) → update = local −
+global → update attack on malicious rows → aggregation under the protocol →
+global += aggregate → evaluation. All randomness is derived from
+(seed, purpose, round, client), so runs are bitwise reproducible on the same
+machine and a resumed run equals an uninterrupted one (tested).
+
+**Update vector** (`fte_fl/fl/state.py`): trainable parameters, then
+floating-point buffers (BatchNorm running statistics, BCResNet1 only), in
+float64. Frozen parameters and integer buffers are excluded and stay at the
+global model's values. The global vector is read back from the float32 model
+after every update, so the aggregated vector is the evaluated model.
+
+**Weights** are applied once, inside the rule's selection: FedAvg uses
+n_k / Σ n_k (or 1/n); Krum, Multi-Krum, trimmed mean and Bulyan use their own
+unweighted coefficients and ignore sample counts.
+
+**Metrics per round**: clean test loss/accuracy; validation loss/accuracy
+(Speech Commands only); local training loss (mean over local minibatches;
+all clients and honest clients); backdoor ASR on a separate triggered set
+(held-out samples whose label is not the target, full trigger); for label
+flipping, the source-class flip rate and source-class accuracy; filtering
+diagnostics from ground-truth labels (malicious selected/rejected, TPR, FPR,
+precision, recall, kept-coordinate fractions); wall-clock times; payload
+sizes; ciphertext counts; CKKS aggregate error versus plaintext; process
+peak RSS. Payload sizes are computed sizes of serialized objects, not
+measured network traffic.
+
+```bash
+python -m pytest -v tests/test_simulator.py
+```
+
+Definitions, threat model, limitations and smoke-test results:
+`results/PAPER_NOTES.md`. Unit tests and smoke runs validate the
+implementation; they are not evidence of robustness.
 
 ## Datasets
 
@@ -236,6 +320,8 @@ Source: `/mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/dat
 
 **LEAF split protocol:** LEAF splits samples per writer — the same 198 writers
 appear in both train and test sets. This is NOT a writer-independent split.
+43 test images are byte-identical to a training image of the same writer
+(checked 2026-10-20); they are kept, as in LEAF.
 
 Verify:
 ```bash
@@ -255,9 +341,21 @@ Source: `/mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02/`
   → **(1, 64, 101)** per clip
 - Classes: **35** command words
 
-**Known limitation:** `build_speech_clients` samples from all 2,618 speakers,
-not restricted to the 2,112 official training-split speakers. Must be fixed
-before reporting accuracy against the official test set.
+**Official split (Milestone 5):** `official_split_files` reads the dataset's
+`validation_list.txt` / `testing_list.txt` (the README's SHA-1-of-speaker
+rule; every other clip is training) and raises if a list is missing, lists
+absent files, overlaps the other, or a speaker spans two splits. Recomputed
+2026-10-20:
+
+| Split | Clips | Speakers |
+|---|---|---|
+| training | 84,843 | 2,112 |
+| validation | 9,981 | 256 |
+| testing | 11,005 | 250 |
+
+No speaker is shared between splits, and recomputing the README's hash rule
+reproduces both lists exactly. `build_speech_clients` draws clients only
+from training speakers; `build_speech_eval` returns validation/testing.
 
 Verify:
 ```bash
@@ -270,6 +368,10 @@ Cache: `./data_cache/` (git-ignored, torchvision auto-downloads ~169 MB on first
 
 **Verified:** 50k train / 10k test, 100 fine classes, 20 superclasses.
 Sample shape: (3, 32, 32). Superclass mapping verified against real torchvision pickle.
+Partitions of the training set: `iid`, `dirichlet` (alpha), `superclass`; the
+simulator evaluates on the official test set and rejects partitions with
+empty clients. 10 test images are byte-identical to training images (a
+property of the official split, kept).
 
 Verify (requires download):
 ```bash

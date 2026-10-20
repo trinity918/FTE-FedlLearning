@@ -47,9 +47,21 @@ function's docstring for exactly what is verified.
 in order.  It documents the data flow; it is produced by the same code, so
 it does not independently enforce it.  The enforced boundary is that the
 Aggregator holds no secret key and accepts only bytes.
+
+`ProtocolResult.traffic` sums payload sizes in bytes by message kind:
+`len()` of the serialized TenSEAL objects for ciphertexts and public
+contexts; for plaintext updates, the float64 array size (8 bytes per
+coordinate); for commitments, proofs and openings, a fixed-width encoding
+of each integer (`pedersen.ELEMENT_BYTES`).  The two public-context
+entries are the size of ONE copy (key distribution, not repeated per
+round).  No message is sent over a network; these are payload sizes, not
+measured traffic, and exclude framing and the plaintext selection
+messages.  `ProtocolResult.timings` holds wall-clock seconds
+(time.perf_counter) per step, all in this one process.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -57,6 +69,7 @@ import numpy as np
 import tenseal as ts
 
 from fte_fl.attest.pedersen import (
+    ELEMENT_BYTES,
     Opening,
     Proof,
     commit_update,
@@ -84,10 +97,31 @@ class ProtocolResult:
     contributors: np.ndarray         # original client indices that sent ciphertexts
     transcript: list[Message]
     rejected: np.ndarray = field(default_factory=lambda: np.array([], dtype=int))
+    traffic: dict[str, int] = field(default_factory=dict)     # bytes by message kind
+    timings: dict[str, float] = field(default_factory=dict)   # seconds by step
+    ciphertexts: dict[str, int] = field(default_factory=dict)  # serialized CKKS vectors by kind
 
 
 def _client(i: int) -> str:
     return f"client:{i}"
+
+
+def _add(d: dict, key: str, value) -> None:
+    d[key] = d.get(key, 0) + value
+
+
+class _Timer:
+    """Context manager adding the elapsed perf_counter seconds to timings[key]."""
+
+    def __init__(self, timings: dict, key: str):
+        self.timings, self.key = timings, key
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+
+    def __exit__(self, *exc):
+        _add(self.timings, self.key, time.perf_counter() - self.start)
+        return False
 
 
 class KeyHolder:
@@ -175,11 +209,20 @@ class Aggregator:
         return self.weighted_sum(encrypted, [1.0] * len(encrypted))
 
 
-def _public_parties(key_holder: KeyHolder, galois_keys: bool) -> tuple[ts.Context, Aggregator]:
+def _public_parties(key_holder: KeyHolder, galois_keys: bool,
+                    traffic: dict) -> tuple[ts.Context, Aggregator]:
     """Clients' encryption context (no Galois keys) and the aggregator."""
-    client_ctx = ts.context_from(key_holder.public_context(galois_keys=False))
-    aggregator = Aggregator(key_holder.public_context(galois_keys=galois_keys))
-    return client_ctx, aggregator
+    client_bytes = key_holder.public_context(galois_keys=False)
+    aggregator_bytes = key_holder.public_context(galois_keys=galois_keys)
+    traffic["public_context_client_copy"] = len(client_bytes)
+    traffic["public_context_aggregator"] = len(aggregator_bytes)
+    return ts.context_from(client_bytes), Aggregator(aggregator_bytes)
+
+
+def _send(traffic: dict, ciphertexts: dict, kind: str, chunks: list[bytes]) -> None:
+    """Account for serialized ciphertexts of one message kind (bytes and count)."""
+    _add(traffic, kind, sum(len(c) for c in chunks))
+    _add(ciphertexts, kind, len(chunks))
 
 
 # ─── EtF ─────────────────────────────────────────────────────────────────────
@@ -200,45 +243,60 @@ def run_etf(updates, rule: str, key_holder: KeyHolder, *, f: int | None = None,
         raise ValueError("krum takes no m")
     u = check_updates(updates)
     n = u.shape[0]
-    client_ctx, aggregator = _public_parties(key_holder, galois_keys=rule != "fedavg")
+    traffic: dict[str, int] = {}
+    timings: dict[str, float] = {}
+    cts: dict[str, int] = {}
+    client_ctx, aggregator = _public_parties(key_holder, rule != "fedavg", traffic)
     transcript: list[Message] = []
 
     encrypted = []
     for i in range(n):
-        encrypted.append(_encrypt(client_ctx, u[i], key_holder.chunk_size))
+        with _Timer(timings, "client_encrypt_s"):
+            encrypted.append(_encrypt(client_ctx, u[i], key_holder.chunk_size))
+        _send(traffic, cts, "ciphertext_update", encrypted[-1])
         transcript.append(Message(_client(i), "aggregator", "ciphertext_update"))
 
     if rule == "fedavg":
-        selection = RULES["fedavg"](u, weights)
+        with _Timer(timings, "filter_s"):
+            selection = RULES["fedavg"](u, weights)
     else:
         if f is None:
             raise ValueError(f"{rule} requires f")
-        enc_dist = aggregator.squared_distances(encrypted)
+        with _Timer(timings, "aggregator_distances_s"):
+            enc_dist = aggregator.squared_distances(encrypted)
+        _send(traffic, cts, "encrypted_squared_distances", list(enc_dist.values()))
         transcript.append(Message("aggregator", "key_holder", "encrypted_squared_distances"))
-        dist = key_holder.decrypt_distances(n, enc_dist)
-        w = np.zeros(n)
-        if rule == "krum":
-            w[krum_from_distances(dist, f)[0]] = 1.0
-        else:
-            chosen, _ = multi_krum_from_distances(dist, f, m)
-            w[chosen] = 1.0 / len(chosen)
-        selection = Selection(weights=w)
+        with _Timer(timings, "key_holder_decrypt_s"):
+            dist = key_holder.decrypt_distances(n, enc_dist)
+        with _Timer(timings, "filter_s"):
+            w = np.zeros(n)
+            if rule == "krum":
+                w[krum_from_distances(dist, f)[0]] = 1.0
+            else:
+                chosen, _ = multi_krum_from_distances(dist, f, m)
+                w[chosen] = 1.0 / len(chosen)
+            selection = Selection(weights=w)
         transcript.append(Message("key_holder", "aggregator", "selection"))
 
     contributors = selection.contributors
-    enc_agg = aggregator.weighted_sum(
-        [encrypted[i] for i in contributors], [selection.weights[i] for i in contributors]
-    )
+    with _Timer(timings, "aggregator_sum_s"):
+        enc_agg = aggregator.weighted_sum(
+            [encrypted[i] for i in contributors], [selection.weights[i] for i in contributors]
+        )
+    _send(traffic, cts, "encrypted_aggregate", enc_agg)
     transcript.append(Message("aggregator", "key_holder", "encrypted_aggregate"))
-    aggregate = key_holder.decrypt_vector(enc_agg)
-    return ProtocolResult(aggregate, selection, contributors, transcript)
+    with _Timer(timings, "key_holder_decrypt_s"):
+        aggregate = key_holder.decrypt_vector(enc_agg)
+    return ProtocolResult(aggregate, selection, contributors, transcript,
+                          traffic=traffic, timings=timings, ciphertexts=cts)
 
 
 # ─── FTE ─────────────────────────────────────────────────────────────────────
 
-def _fte_encrypt_and_sum(u, selection, ids, key_holder, transcript) -> tuple[np.ndarray, np.ndarray]:
+def _fte_encrypt_and_sum(u, selection, ids, key_holder, transcript,
+                         traffic, timings, cts) -> tuple[np.ndarray, np.ndarray]:
     """Steps after plaintext filtering: contributors encrypt, aggregator sums."""
-    client_ctx, aggregator = _public_parties(key_holder, galois_keys=False)
+    client_ctx, aggregator = _public_parties(key_holder, False, traffic)
     contributors = selection.contributors
     if len(contributors) == 0:
         raise ValueError("the filter selected no contributions")
@@ -246,11 +304,17 @@ def _fte_encrypt_and_sum(u, selection, ids, key_holder, transcript) -> tuple[np.
         transcript.append(Message("filter", _client(ids[k]), "selection"))
     encrypted = []
     for k in contributors:
-        encrypted.append(_encrypt(client_ctx, selection.contribution(k, u[k]), key_holder.chunk_size))
+        with _Timer(timings, "client_encrypt_s"):
+            encrypted.append(_encrypt(client_ctx, selection.contribution(k, u[k]), key_holder.chunk_size))
+        _send(traffic, cts, "ciphertext_contribution", encrypted[-1])
         transcript.append(Message(_client(ids[k]), "aggregator", "ciphertext_contribution"))
-    enc_agg = aggregator.sum(encrypted)
+    with _Timer(timings, "aggregator_sum_s"):
+        enc_agg = aggregator.sum(encrypted)
+    _send(traffic, cts, "encrypted_aggregate", enc_agg)
     transcript.append(Message("aggregator", "key_holder", "encrypted_aggregate"))
-    return key_holder.decrypt_vector(enc_agg), np.asarray(ids)[contributors]
+    with _Timer(timings, "key_holder_decrypt_s"):
+        aggregate = key_holder.decrypt_vector(enc_agg)
+    return aggregate, np.asarray(ids)[contributors]
 
 
 def run_fte(updates, rule: str, key_holder: KeyHolder, **rule_params) -> ProtocolResult:
@@ -258,12 +322,17 @@ def run_fte(updates, rule: str, key_holder: KeyHolder, **rule_params) -> Protoco
     if rule not in RULES:
         raise ValueError(f"unknown rule {rule!r}; expected one of {sorted(RULES)}")
     u = check_updates(updates)
+    traffic: dict[str, int] = {"plaintext_update": int(u.size * 8)}
+    timings: dict[str, float] = {}
+    cts: dict[str, int] = {}
     transcript = [Message(_client(i), "filter", "plaintext_update") for i in range(u.shape[0])]
-    selection = RULES[rule](u, **rule_params)
+    with _Timer(timings, "filter_s"):
+        selection = RULES[rule](u, **rule_params)
     aggregate, contributors = _fte_encrypt_and_sum(
-        u, selection, list(range(u.shape[0])), key_holder, transcript
+        u, selection, list(range(u.shape[0])), key_holder, transcript, traffic, timings, cts
     )
-    return ProtocolResult(aggregate, selection, contributors, transcript)
+    return ProtocolResult(aggregate, selection, contributors, transcript,
+                          traffic=traffic, timings=timings, ciphertexts=cts)
 
 
 # ─── FTE + attestation ───────────────────────────────────────────────────────
@@ -307,7 +376,9 @@ def run_fte_attested(submissions: list[AttestedSubmission], rule: str, key_holde
     proof_i verifies under context (round_id, i) AND the opening opens C_i
     with m = digest(u_i); other clients are excluded (`rejected`) before the
     rule runs on the accepted ones.  The aggregator re-verifies every
-    contributor's public proof before using its ciphertext.
+    contributor's public proof before using its ciphertext.  A `weights`
+    rule parameter (FedAvg) is given per submission; the rule receives the
+    accepted clients' entries.
 
     Verified: the plaintext the filter used equals the committed update
     (up to SHA-256 collisions), and each accepted proof is bound to this
@@ -323,29 +394,48 @@ def run_fte_attested(submissions: list[AttestedSubmission], rule: str, key_holde
     if not all(isinstance(s, AttestedSubmission) for s in submissions):
         raise TypeError("submissions must be AttestedSubmission objects")
     u_all = check_updates(np.stack([np.asarray(s.update) for s in submissions]))
+    n = len(submissions)
+    # commitment + proof (t, s1, s2): 4 integers; opening (m, r): 2 integers
+    traffic: dict[str, int] = {
+        "commitment_and_proof": 2 * n * 4 * ELEMENT_BYTES,   # to filter and aggregator
+        "plaintext_update": int(u_all.size * 8),
+        "opening": n * 2 * ELEMENT_BYTES,
+    }
+    timings: dict[str, float] = {}
 
     transcript: list[Message] = []
-    for i in range(len(submissions)):
+    for i in range(n):
         transcript.append(Message(_client(i), "filter", "commitment_and_proof"))
         transcript.append(Message(_client(i), "aggregator", "commitment_and_proof"))
-    for i in range(len(submissions)):
+    for i in range(n):
         transcript.append(Message(_client(i), "filter", "plaintext_update_and_opening"))
 
     accepted, rejected = [], []
-    for i, s in enumerate(submissions):
-        ctx = attestation_context(round_id, i)
-        ok = verify_proof(s.commitment, s.proof, ctx) and verify_opening(s.commitment, u_all[i], s.opening)
-        (accepted if ok else rejected).append(i)
+    with _Timer(timings, "filter_verify_s"):
+        for i, s in enumerate(submissions):
+            ctx = attestation_context(round_id, i)
+            ok = verify_proof(s.commitment, s.proof, ctx) and verify_opening(s.commitment, u_all[i], s.opening)
+            (accepted if ok else rejected).append(i)
     if not accepted:
         raise ValueError("no submission passed attestation")
 
     u = u_all[accepted]
-    selection = RULES[rule](u, **rule_params)
-    for k in selection.contributors:
-        i = accepted[k]
-        if not verify_proof(submissions[i].commitment, submissions[i].proof,
-                            attestation_context(round_id, i)):
-            raise RuntimeError(f"aggregator rejected client {i}'s attestation")
-    aggregate, contributors = _fte_encrypt_and_sum(u, selection, accepted, key_holder, transcript)
+    if rule_params.get("weights") is not None:
+        w = np.asarray(rule_params["weights"])
+        if w.shape != (n,):
+            raise ValueError(f"weights must have one entry per submission ({n}), got {w.shape}")
+        rule_params = {**rule_params, "weights": w[accepted]}
+    with _Timer(timings, "filter_s"):
+        selection = RULES[rule](u, **rule_params)
+    with _Timer(timings, "aggregator_verify_s"):
+        for k in selection.contributors:
+            i = accepted[k]
+            if not verify_proof(submissions[i].commitment, submissions[i].proof,
+                                attestation_context(round_id, i)):
+                raise RuntimeError(f"aggregator rejected client {i}'s attestation")
+    cts: dict[str, int] = {}
+    aggregate, contributors = _fte_encrypt_and_sum(u, selection, accepted, key_holder, transcript,
+                                                   traffic, timings, cts)
     return ProtocolResult(aggregate, selection, contributors, transcript,
-                          rejected=np.array(rejected, dtype=int))
+                          rejected=np.array(rejected, dtype=int), traffic=traffic,
+                          timings=timings, ciphertexts=cts)

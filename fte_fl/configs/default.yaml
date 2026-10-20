@@ -4,6 +4,10 @@ project:
 runtime:
   device: cpu
   num_workers: 1
+  # set by the simulator; results reproduce only at equal thread counts.
+  # Measured 2026-10-20 on this 8-CPU WSL2 machine: 4 threads was fastest
+  # for CnnSmall and BCResNet1; 8 threads was 5-30x slower than 4.
+  torch_threads: 4
 crypto:
   scheme: CKKS
   poly_modulus_degree: 16384
@@ -11,23 +15,48 @@ crypto:
   global_scale: 1099511627776
   chunk_size: 8192
   numerical_tolerance: 0.001
-defense:
-  # Must be a key of fte_fl.defenses.aggregators.RULES. Not read by any code
-  # yet; the simulator (Milestone 5) will consume these settings.
-  name: multi_krum
-  byzantine_fraction: 0.2
 experiment:
+  # Read by fte_fl.fl.config.parse_sim_config (the simulator).  Training
+  # hyperparameters are untuned project defaults, not taken from a paper.
+  dataset: femnist            # synthetic | femnist | speech_commands | cifar100
+  model: cnn_small            # must be paired with the dataset (fl/config.py DATASET_MODELS)
   rounds: 25
   clients_per_round: 10
+  local_epochs: 1
+  batch_size: 32
+  optimizer: sgd
+  lr: 0.05
+  momentum: 0.0
+  weight_decay: 0.0
+  protocol: plaintext         # plaintext | etf | fte | fte_attested
+  eval_batch_size: 256
+  max_eval_samples: null      # null = the full held-out set
+defense:
+  # name: a key of fte_fl.defenses.aggregators.RULES.  f = assumed Byzantine
+  # clients per round (krum, multi_krum, bulyan); b = values trimmed per side
+  # (trimmed_mean); m = multi_krum selection size (null: n - f).
+  name: multi_krum
+  f: 2
+attack:
+  type: none                  # none | sign_flip | scaling | zero | gaussian | alie | label_flip | backdoor
+  num_malicious: 0            # malicious clients in the whole population (fixed for the run)
+  start_round: 1
+  seed: 0
 datasets:
+  synthetic:                  # test-only Gaussian clusters (model: mlp)
+    num_clients: 10
+    num_classes: 4
+    samples_per_client: 40
+    test_samples: 400
+    dim: 8
+    separation: 2.0
   femnist:
     train_dir: /mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/data/femnist/data/train
     test_dir: /mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/data/femnist/data/test
-    num_clients: 500
-    batch_size: 32
+    num_clients: 198          # all writers in the local LEAF sample (the loader capped 500 to 198)
   speech_commands:
     data_dir: /mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02
-    num_clients: 800
+    num_clients: 800          # drawn from the 2,112 official training speakers
     n_mels: 64
     n_fft: 400
     hop_length: 160
@@ -36,5 +65,5 @@ datasets:
   cifar100:
     cache_dir: ./data_cache
     num_clients: 100
-    partition: dirichlet
+    partition: dirichlet      # iid | dirichlet | superclass
     alpha: 0.1

@@ -326,3 +326,54 @@ def test_attestation_context_validation(round_id, client_id):
 
 def test_attestation_context_distinct():
     assert attestation_context(1, 2) != attestation_context(2, 1)
+
+
+# ─── payload sizes, timings, ciphertext counts ──────────────────────────────
+
+def test_etf_accounting(key_holder, updates):
+    n, d = updates.shape
+    res = run_etf(updates, "krum", key_holder, f=2)
+    chunks = -(-d // key_holder.chunk_size)                       # 3 chunks of <= 16
+    assert res.ciphertexts == {"ciphertext_update": n * chunks,
+                               "encrypted_squared_distances": n * (n - 1) // 2,
+                               "encrypted_aggregate": chunks}
+    for kind in ("ciphertext_update", "encrypted_squared_distances", "encrypted_aggregate",
+                 "public_context_client_copy", "public_context_aggregator"):
+        assert res.traffic[kind] > 0
+    # the aggregator's context carries Galois keys for the dot products
+    assert res.traffic["public_context_aggregator"] > res.traffic["public_context_client_copy"]
+    assert "plaintext_update" not in res.traffic
+    assert set(res.timings) == {"client_encrypt_s", "aggregator_distances_s",
+                                "key_holder_decrypt_s", "filter_s", "aggregator_sum_s"}
+    assert all(t > 0 for t in res.timings.values())
+
+
+def test_fte_accounting(key_holder, updates):
+    n, d = updates.shape
+    res = run_fte(updates, "multi_krum", key_holder, f=2, m=4)
+    chunks = -(-d // key_holder.chunk_size)
+    assert res.traffic["plaintext_update"] == n * d * 8
+    assert res.ciphertexts == {"ciphertext_contribution": 4 * chunks, "encrypted_aggregate": chunks}
+    # same content (no Galois keys); serialized lengths differ slightly between
+    # serializations (observed e.g. 1,876,181 vs 1,876,628 bytes), so compare loosely
+    assert res.traffic["public_context_aggregator"] == pytest.approx(
+        res.traffic["public_context_client_copy"], rel=0.01)
+    assert set(res.timings) == {"filter_s", "client_encrypt_s", "aggregator_sum_s",
+                                "key_holder_decrypt_s"}
+
+
+def test_attested_accounting_and_weight_subsetting(key_holder, updates):
+    subs = _submissions(updates[:5])
+    subs[1] = attest_update(updates[1], ROUND + 1, 1)             # rejected
+    weights = np.array([1.0, 100.0, 2.0, 3.0, 4.0])
+    res = run_fte_attested(subs, "fedavg", key_holder, ROUND, weights=weights)
+    assert res.rejected.tolist() == [1]
+    keep = [0, 2, 3, 4]
+    np.testing.assert_allclose(res.selection.weights, weights[keep] / weights[keep].sum())
+    np.testing.assert_allclose(res.aggregate, weights[keep] / weights[keep].sum() @ updates[keep],
+                               atol=ATOL)
+    assert res.traffic["commitment_and_proof"] == 2 * 5 * 4 * 256
+    assert res.traffic["opening"] == 5 * 2 * 256
+    assert res.timings["filter_verify_s"] > 0
+    with pytest.raises(ValueError, match="one entry per submission"):
+        run_fte_attested(subs, "fedavg", key_holder, ROUND, weights=weights[keep])

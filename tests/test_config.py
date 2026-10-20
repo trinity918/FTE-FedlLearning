@@ -43,6 +43,16 @@ def test_default_defense_name_is_a_registered_rule():
     assert cfg["defense"]["name"] in RULES
 
 
+def test_default_config_passes_simulator_validation():
+    """The shipped default config is a valid simulator config (no data is loaded)."""
+    from fte_fl.fl.config import parse_sim_config
+
+    sim = parse_sim_config(Config.from_yaml(CONFIG_PATH).raw)
+    assert (sim.dataset, sim.model, sim.defense.name, sim.defense.f) == (
+        "femnist", "cnn_small", "multi_krum", 2)
+    assert sim.attack.type == "none" and sim.protocol == "plaintext"
+
+
 def test_config_to_dict_includes_reproducibility():
     cfg = Config.from_yaml(CONFIG_PATH)
     d = cfg.to_dict()

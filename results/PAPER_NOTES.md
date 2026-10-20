@@ -469,10 +469,225 @@ No exact equivalence between CKKS and plaintext aggregation is claimed.
 
 Threshold or multi-party decryption, encrypted coordinate-wise filtering,
 ciphertext–commitment consistency proofs, verifiable filtering, network or
-timing simulation, client sampling, training loops, code that reads the
-`defense` config settings, and any experiment. **Robustness of any defense
-has not been measured in training.** The Milestone 1 limitation remains open:
-the Speech Commands loader does not enforce the official speaker split.
+timing simulation, and any experiment. (Client sampling, training loops and
+the config wiring were added in Milestone 5.) **Robustness of any defense
+has not been measured in training.**
+
+---
+
+## Milestone 5: Simulator and Experimental Pipeline — Definitions and Caveats
+
+Implemented in `fte_fl/fl/` (`config.py`, `state.py`, `data.py`,
+`models.py`, `attacks.py`, `aggregation.py`, `metrics.py`,
+`simulator.py`) and `fte_fl/experiments/run.py`; tested in
+`tests/test_simulator.py` (synthetic data) plus dataset tests. **Only smoke
+runs (2 rounds, a handful of clients, capped data) have been executed. They
+show that the pipeline runs; their accuracies, ASRs and filtering numbers are
+not results and must not be reported as such.**
+
+### Dataset partitions (changes in this milestone)
+
+- **Speech Commands — official split now enforced.** The dataset archive's
+  README ("Partitioning") assigns files by SHA-1 of the speaker part of the
+  name and ships the result as `validation_list.txt` / `testing_list.txt`.
+  `official_split_files` reads those lists (it does not invent or recompute
+  a split) and fails if they are missing, inconsistent with the files on
+  disk, overlapping, or not speaker-disjoint. Recomputed on 2026-10-20:
+  training 84,843 clips / 2,112 speakers; validation 9,981 / 256; testing
+  11,005 / 250; zero speakers shared; a re-implementation of the README's
+  hash rule reproduces both lists with zero mismatches over 105,829 clips.
+  Clients are drawn only from training speakers; validation/testing are used
+  only for evaluation. Behaviour change: `build_speech_clients(split=...)`
+  now accepts only "train" (it previously ignored the argument and sampled
+  from all 2,618 speakers). The log-mel representation is unchanged.
+- **FEMNIST** — unchanged (LEAF per-sample split; same 198 writers in train
+  and test). Audit: 43 test images are byte-identical to a training image of
+  the same writer. This comes from the LEAF data, not from our code; the
+  images are kept so the split remains LEAF's. `num_clients` default changed
+  500 → 198 (the loader already capped it at 198; the simulator now rejects
+  a request for more writers than exist).
+- **CIFAR-100** — official train/test split, unchanged; an `iid` partition
+  was added beside `dirichlet` and `superclass`. Audit: 10 test images are
+  byte-identical to training images (property of the official split; kept).
+  The simulator never partitions the test set and rejects partitions that
+  leave a client empty.
+- Smoke runs use `max_samples_per_client` / `max_eval_samples` (seeded random
+  subsets, recorded in `manifest.json`). Results on subsets are not results
+  on the dataset.
+
+### Update representation and weighting
+
+- Vector = trainable parameters (`named_parameters` order, identical to
+  `trainable_vector()`), then floating-point buffers (BatchNorm running
+  mean/var; BCResNet1 only), float64. Frozen parameters (LoRA backbones)
+  and integer buffers (`num_batches_tracked`) are excluded and keep the
+  global values; BatchNorm with `momentum=None` is rejected.
+- Buffers are included so that robust rules filter them; leaving them out
+  would require an unfiltered average. Consequence: an attack can drive a
+  running variance negative; evaluation then fails (non-finite loss) and the
+  run is recorded as failed instead of being clamped.
+- Note for the CKKS cost estimates of Milestone 2: the aggregated vector of
+  BCResNet1 is longer than its trainable count by its BatchNorm buffers.
+- Client update u_i = local − global; global ← global + aggregate (server
+  learning rate 1); the global vector is re-read from the float32 model.
+- Weights are applied once, inside the rule's `Selection`. FedAvg:
+  n_i / Σ n_j over the round's participants (or uniform, configurable). The
+  robust rules use their own unweighted coefficients and ignore sample
+  counts, so "Multi-Krum" here is an unweighted mean of the selected
+  updates, not a sample-weighted FedAvg of them. Malicious clients report
+  true sample counts.
+- FTE + attestation: the rule runs on the clients that pass attestation;
+  FedAvg weights are renormalised over them.
+
+### Client sampling and local training
+
+Uniform sampling without replacement each round (seed, round). Local
+training: SGD (lr, momentum, weight decay configurable), fresh optimizer per
+round, cross-entropy, shuffled minibatches; seeds derived from (seed, round,
+client). All hyperparameter defaults are untuned project choices.
+
+### Threat model and attack integration (`fte_fl/fl/attacks.py`)
+
+- A fixed set of `num_malicious` clients (seeded) for the whole run; they
+  collude. Before `start_round` they behave honestly.
+- Update attacks transform a malicious client's honestly trained update and
+  read only that update (sign flip, scaling, zero; Gaussian uses only its
+  length). ALIE uses the mean and sample standard deviation of the honest
+  updates of the malicious participants of the round (≥ 2 required, else
+  the run fails) and never reads honest clients' updates; z is a number or
+  `alie_z_max(n, m)` for the round's n participants and m malicious ones.
+  Whether this matches the knowledge assumption of the ALIE paper has not
+  been re-checked for this milestone; it is the project's explicit choice.
+  All malicious participants send the same ALIE vector.
+- Label flipping: a `poison_fraction` of a malicious client's source-class
+  samples get the target label (static, chosen once with the attack seed).
+- Backdoor: a `poison_fraction` of a malicious client's samples get the
+  trigger and the target label (static). `distributed`: the k-th malicious
+  client (sorted index order) uses DBA local part k mod 4; `global`: the
+  full trigger. **DBA-style, not a DBA reproduction**: DBA poisons a fixed
+  number of samples inside each local batch, uses its own attacker
+  schedule, local epochs, learning rates and scaling, none of which is
+  replicated. Speech Commands uses the documented feature-space log-mel
+  trigger (not waveform poisoning), applied to unnormalized features (the
+  simulator applies no normalization).
+- The defenses never see the malicious labels; filtering metrics use them
+  only as ground truth for diagnostics.
+
+### Metrics (`fte_fl/fl/metrics.py`, `simulator.py`)
+
+- Clean: test loss/accuracy on the untouched held-out set; validation
+  loss/accuracy where an official validation split exists (Speech Commands).
+  FEMNIST and CIFAR-100 have no validation split here (none was carved out,
+  to keep the established partitions).
+- Training loss: LOCAL, the mean minibatch cross-entropy over a client's
+  local training; averaged over all participants and over honest ones.
+- Backdoor ASR: held-out samples with true label ≠ target, full trigger,
+  fraction predicted as target. Never mixed into clean accuracy.
+- Label flipping: on held-out source-class samples, flip rate (predicted
+  target) and source-class accuracy.
+- Filtering (diagnostic): rejected = contributes nothing (weight 0 or all
+  coordinates masked); malicious selected/rejected, TPR (= recall), FPR,
+  precision; for trimmed mean and Bulyan, mean kept-coordinate fractions and
+  the malicious clients' effective weight Σ a_i·kept_i; whether the round's
+  malicious count exceeded the assumed f (or b).
+- Efficiency: wall-clock local training (sum and max), aggregation,
+  protocol steps (client encryption, server distance/sum, key-holder
+  decryption, filtering, attestation and verification), evaluation, round;
+  payload sizes (serialized ciphertexts and public contexts; plaintext
+  updates as 8 bytes per coordinate; commitments/proofs/openings as
+  fixed-width integers; model broadcast as 4 bytes per coordinate);
+  ciphertext counts; CKKS aggregate error versus plaintext evaluation of the
+  same selection; process peak RSS. Payload sizes are not measured network
+  traffic: there is no network, framing is excluded, and public-context
+  sizes are one copy each (key distribution). Serialized TenSEAL contexts
+  vary by a few hundred bytes between serializations.
+- All parties run in one process, so per-party times are sequential
+  wall-clock times on one machine, not a distributed-system latency.
+
+### Reproducibility
+
+Every run records the raw config and its hash, parsed settings, Python and
+package versions, torch thread count, git commit and whether tracked files
+were modified, model parameter counts, CKKS parameters, the client manifest
+and partition id. The torch thread count is a config setting
+(`runtime.torch_threads`, default 4) because it changes floating-point
+reduction order. Runs with the same config are bitwise identical on the
+same machine and thread count (tested on synthetic data; also observed for
+a repeated FEMNIST smoke run), and an
+interrupted run resumed from its checkpoint equals an uninterrupted one
+(tested). Pedersen commitments use `secrets` randomness, which does not
+affect any aggregate or metric. Output directories are never overwritten.
+
+### Smoke matrix (2026-10-20, git-ignored outputs in `results/runs/smoke-20261020/`)
+
+2 rounds each, torch_threads 4, seed 42, capped data: FEMNIST 10 writers ×
+≤40 samples, 500 test samples; Speech Commands 5 training speakers × ≤16
+clips, 100 test + 100 validation clips; CIFAR-100 5 clients (dirichlet 0.5)
+× ≤32 images, 200 test images (LoRA-ViT: 3 clients × 4 images, 16 test
+images). These runs check that every path executes; **after 2 rounds on
+this little data no accuracy, ASR or filtering number below means
+anything about the methods.** Elapsed = whole process (data loading
+dominates for FEMNIST and Speech Commands).
+
+| Run | Exit | Elapsed (s) | Note |
+|---|---|---|---|
+| FEMNIST CnnSmall FedAvg (and an identical rerun) | 0, 0 | 27.3, 24.6 | rerun bitwise identical (metrics without timings, final vector) |
+| Speech BCResNet1 FedAvg | 0 | 44.7 | validation metrics recorded |
+| Speech LoRA-AST FedAvg | 0 | 36.2 | |
+| CIFAR-100 ViT-Tiny FedAvg | 0 | 16.5 | |
+| CIFAR-100 LoRA-ViT FedAvg | 0 | 22.3 | random (not pretrained) backbone |
+| FEMNIST Krum / Multi-Krum / trimmed mean / Bulyan | 0 each | 23.4 / 22.4 / 24.7 / 25.1 | |
+| FEMNIST EtF Multi-Krum (7 clients) | 0 | 160.1 | per round: distances ≈ 30.6 s, encrypted weighted sum ≈ 30.6–31.3 s, encryption ≈ 3 s; CKKS aggregate error ≤ 4.9e-8 |
+| FEMNIST FTE trimmed mean (7 clients) | 0 | 38.3 | encrypted sum ≈ 2 s, encryption ≈ 2.9 s; error ≤ 6.3e-8 |
+| FEMNIST FTE+attestation Bulyan (7 clients) | 0 | 43.6 | attest ≈ 1 s, verification ≈ 2.4 s per round; 0 rejected |
+| FEMNIST sign flip vs Krum (2 malicious) | 0 | 27.4 | both malicious rejected each round |
+| FEMNIST ALIE (z_max) vs Multi-Krum f=3 (3 malicious) | 0 | 24.4 | all 3 malicious selected, 3 honest rejected, each round |
+| FEMNIST label flip 1→7 (3 malicious) | 0 | 24.0 | malicious clients had 2, 5, 1 source samples |
+| FEMNIST DBA-style backdoor, 4 parts (4 malicious) | 0 | 28.5 | |
+| CIFAR-100 global-trigger backdoor ViT-Tiny | 0 | 22.2 | ASR 1.0 with clean accuracy 0.0: the model predicts the target class for everything; not backdoor evidence |
+| Speech feature-space backdoor BCResNet1 | 0 | 31.5 | same caveat (ASR 1.0, clean accuracy 0.0 in round 2) |
+| Bulyan f=2 with 10 clients; EtF + trimmed mean; Krum f=2 with 6 clients | 1 each | 2.8 / 2.4 / 2.5 | rejected at config validation, no run directory created |
+
+Also verified on real data: a FEMNIST Krum run killed with SIGKILL after
+round 1 and resumed reproduced the uninterrupted 4-round run exactly. The
+EtF encrypted weighted sum (plaintext-scalar × ciphertext per contributor)
+costs ~15× the FTE sum of pre-weighted ciphertexts at these sizes.
+
+### Pilot runs for runtime estimation (2026-10-20, `results/runs/pilot-20261020/`)
+
+Full per-client data, 10 clients per round, Multi-Krum f=2, torch_threads 4,
+CKKS ring 16384 / chunk 8192. Measured per-round wall-clock (round 1
+includes ~1.5 s of one-time warm-up in local training):
+
+| Pilot | Data | Round time (s) | Breakdown |
+|---|---|---|---|
+| FEMNIST plaintext | 198 writers, full test (4,174) | 2.8, then 0.9 | load 10 s |
+| FEMNIST EtF | same | 94.3 | distances 56.9 (45 pairs), weighted sum 28.8, encryption 3.5, decryption 0.3 |
+| FEMNIST FTE + attestation | same | 15.2 | encryption 3.4, sum 2.2, attest 1.7, verify 3.3 |
+| CIFAR-100 ViT-Tiny plaintext | 100 clients, dirichlet 0.1 (no empty client at seed 42), full test (10,000) | 132.8 | training 85.3, evaluation 42.5, Multi-Krum 2.0; peak RSS 3.1 GB |
+| Speech BCResNet1 plaintext | 20 speakers (697 clips), 1,000 test + 1,000 validation | 48.8 | training 13.1, evaluation 35.4; data build 88 s for 2,697 clips |
+
+Payloads per FEMNIST round: EtF uploads 131.6 MB of ciphertexts + 20.7 MB
+of encrypted distances; FTE+attestation 105.2 MB (8 contributors) and
+12.9 MB of plaintext updates to the filter; the aggregator's EtF context
+(with Galois keys) is 75.9 MB vs 3.7 MB without.
+
+Extrapolations (NOT measured; linear in the measured per-unit costs):
+- FEMNIST, 100 rounds, per run: plaintext ≈ 2 min; FTE ≈ 17 min (the attested round minus attestation);
+  FTE + attestation ≈ 25 min; EtF ≈ 2.6 h.
+- CIFAR-100 ViT-Tiny plaintext ≈ 2.2 min/round (≈ 3.7 h per 100 rounds);
+  evaluating every round on all 10,000 test images is a third of it. With
+  657 ciphertexts per update, FTE adds roughly 2 min/round of encryption
+  and EtF roughly 45–50 min/round (distances alone ~30 min), i.e. EtF on
+  ViT-Tiny is impractical on this CPU.
+- Speech Commands: ~28 ms per clip of feature extraction, so 800 speakers
+  (~32k training clips) plus full validation and test (21k clips) means
+  ~25 min of data loading per run and ~6 min per round to evaluate on the
+  full held-out sets. A feature cache and an evaluation interval would be
+  needed before full Speech experiments (not implemented).
+- LoRA-ViT (frozen ViT-B/16 at 224×224): from the smoke run, ~0.3 s per
+  training image and ~0.14 s per test image, i.e. roughly 50 min per round
+  at 10 clients × 500 images with full evaluation; impractical on this CPU.
 
 ---
 
@@ -488,8 +703,7 @@ the Speech Commands loader does not enforce the official speaker split.
 
 - 2,618 valid speakers (2,624 minus 6 false IDs from _background_noise_).
 - Official train/val/test speaker split exists via validation_list.txt and
-  testing_list.txt. Current loader does NOT enforce this split. Must be
-  fixed before reporting accuracy against the official test set.
+  testing_list.txt. Enforced since Milestone 5 (see above).
 
 ### CIFAR-100
 
@@ -504,6 +718,6 @@ the Speech Commands loader does not enforce the official speaker split.
 - The EEG legacy experiments from `majorproj/fl_byzantine` are NOT part of
   this study and are not referenced or reproduced here.
 - No model accuracy results have been measured yet (experiments are Milestone 6).
-- No federated training or attack/defense evaluation has occurred yet. Attack
-  functions (Milestone 3) and defenses/protocols (Milestone 4) exist but have
-  not been run in any experiment.
+- No attack/defense evaluation has occurred yet. Milestone 5 ran only
+  2-round smoke tests on capped data to check that the pipeline executes;
+  they are not experiments.

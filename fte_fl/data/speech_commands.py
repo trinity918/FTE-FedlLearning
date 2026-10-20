@@ -7,13 +7,23 @@ Uses torch.stft (no torchaudio) to compute log-mel spectrograms:
 Each speaker (identified by the first 8 hex chars of the filename
 before '_nohash_') is one federated client.
 
+Official partition: the dataset's README (v0.02, "Partitioning") assigns
+each file to training / validation / testing by a SHA-1 hash of the part
+of the file name before '_nohash_' (i.e. the speaker id), and ships the
+result as validation_list.txt and testing_list.txt; every other file is
+training.  `official_split_files` reads those two lists (it does not
+recompute the hash) and raises if they are missing, list files that do not
+exist, overlap, or put one speaker in two partitions.  Federated clients
+are drawn only from training speakers; validation and testing files are
+used only by `build_speech_eval`.
+
 References:
-  Warden, "Launching Speech Commands", 2018.
-  Speech Commands v0.02: 35 command words, ~105k clips, 16 kHz mono.
+  Warden, "Speech Commands: A Dataset for Limited-Vocabulary Speech
+  Recognition", arXiv:1804.03209, 2018.
+  Speech Commands v0.02: 35 command words, 105,829 clips, 16 kHz mono.
 """
 from __future__ import annotations
 
-import glob
 import os
 import random
 import wave
@@ -157,7 +167,9 @@ class SpeechCommandsDataset(Dataset):
         self.labels = []
         for fp in filepaths:
             word = Path(fp).parent.name
-            self.labels.append(_LABEL_TO_IDX.get(word, -1))
+            if word not in _LABEL_TO_IDX:
+                raise ValueError(f"{fp}: directory {word!r} is not one of the 35 command words")
+            self.labels.append(_LABEL_TO_IDX[word])
 
     def __len__(self) -> int:
         return len(self.filepaths)
@@ -189,44 +201,124 @@ def list_speakers(data_dir: str) -> list[str]:
     return sorted(speakers)
 
 
+SPLITS = ("training", "validation", "testing")
+
+
+def speaker_of(relpath: str) -> str:
+    """Speaker id of a clip path such as 'yes/3cfc6b3a_nohash_2.wav'."""
+    name = Path(relpath).name
+    if "_nohash_" not in name:
+        raise ValueError(f"clip name {name!r} has no '_nohash_' speaker marker")
+    return name.split("_nohash_")[0]
+
+
+def _list_clips(data_dir: Path) -> list[str]:
+    """All command-word clips as sorted 'word/file.wav' paths (background noise excluded)."""
+    clips = []
+    for word_dir in sorted(data_dir.iterdir()):
+        if not word_dir.is_dir() or word_dir.name.startswith("."):
+            continue
+        if word_dir.name == "_background_noise_":
+            continue
+        clips.extend(f"{word_dir.name}/{wav.name}" for wav in word_dir.glob("*.wav"))
+    return sorted(clips)
+
+
+def _read_list(path: Path) -> list[str]:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"official split list {path} is missing; refusing to invent a split"
+        )
+    entries = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    if len(set(entries)) != len(entries):
+        raise ValueError(f"{path.name} contains duplicate entries")
+    return entries
+
+
+def official_split_files(data_dir: str) -> dict[str, list[str]]:
+    """The official v0.02 partition as {split: sorted 'word/file.wav' paths}.
+
+    validation/testing come from validation_list.txt / testing_list.txt;
+    every other command-word clip is training (README, "Partitioning").
+    Raises if a list is missing, has duplicates or entries absent on disk,
+    if the two lists overlap, if a split is empty, or if any speaker
+    appears in more than one split.
+    """
+    data_dir = Path(data_dir)
+    clips = _list_clips(data_dir)
+    on_disk = set(clips)
+    val = _read_list(data_dir / "validation_list.txt")
+    test = _read_list(data_dir / "testing_list.txt")
+    for name, entries in (("validation_list.txt", val), ("testing_list.txt", test)):
+        missing = [e for e in entries if e not in on_disk]
+        if missing:
+            raise ValueError(f"{name} lists {len(missing)} clips not on disk, e.g. {missing[0]!r}")
+    if set(val) & set(test):
+        raise ValueError("validation_list.txt and testing_list.txt overlap")
+    held_out = set(val) | set(test)
+    splits = {
+        "training": [c for c in clips if c not in held_out],
+        "validation": sorted(val),
+        "testing": sorted(test),
+    }
+    speakers = {}
+    for split, files in splits.items():
+        if not files:
+            raise ValueError(f"the official {split} split is empty")
+        speakers[split] = {speaker_of(f) for f in files}
+    for a in range(len(SPLITS)):
+        for b in range(a + 1, len(SPLITS)):
+            shared = speakers[SPLITS[a]] & speakers[SPLITS[b]]
+            if shared:
+                raise ValueError(
+                    f"{len(shared)} speakers appear in both {SPLITS[a]} and {SPLITS[b]}"
+                )
+    return splits
+
+
 def build_speech_clients(
     data_dir: str,
     num_clients: int = 800,
     seed: int = 42,
     split: str = "train",
 ) -> dict[str, SpeechCommandsDataset]:
-    """Build per-speaker datasets from Speech Commands v0.02.
+    """Per-speaker client datasets drawn only from the official TRAINING split.
 
     Args:
-        data_dir: Path to the speech_commands_v0.02 directory.
-        num_clients: Desired number of clients. Capped at available speakers.
-        seed: Random seed for reproducible client selection.
-        split: Currently both splits use the same pool (LEAF-style
-               per-writer partitioning is not available for this dataset).
+        data_dir: Path to the speech_commands_v0.02 directory (with
+                  validation_list.txt and testing_list.txt).
+        num_clients: Desired number of clients; capped at the number of
+                     training speakers.
+        seed: Random seed for reproducible speaker selection
+              (random.Random(seed).sample over the sorted speaker ids).
+        split: must be "train"; validation and testing clips are never
+               client data (use `build_speech_eval`).
 
     Returns:
-        Dict mapping speaker_id -> SpeechCommandsDataset.
+        Dict mapping speaker_id -> SpeechCommandsDataset (that speaker's
+        training clips, sorted by path), in selection order.
     """
+    if split != "train":
+        raise ValueError(
+            f"clients are built from the training split only, got split={split!r}; "
+            "use build_speech_eval for validation/testing"
+        )
+    if isinstance(num_clients, bool) or not isinstance(num_clients, int) or num_clients < 1:
+        raise ValueError(f"num_clients must be a positive int, got {num_clients!r}")
     data_dir = Path(data_dir)
-
-    # Group files by speaker
     speaker_files: dict[str, list[str]] = {}
-    for word_dir in sorted(data_dir.iterdir()):
-        if not word_dir.is_dir() or word_dir.name.startswith("."):
-            continue
-        if word_dir.name == "_background_noise_":
-            continue
-        for wav in word_dir.glob("*.wav"):
-            speaker_id = wav.name.split("_")[0]
-            if speaker_id not in speaker_files:
-                speaker_files[speaker_id] = []
-            speaker_files[speaker_id].append(str(wav))
+    for rel in official_split_files(str(data_dir))["training"]:
+        speaker_files.setdefault(speaker_of(rel), []).append(str(data_dir / rel))
 
-    available = len(speaker_files)
-    n = min(num_clients, available)
-
+    n = min(num_clients, len(speaker_files))
     rng = random.Random(seed)
-    speaker_ids = sorted(speaker_files.keys())
-    selected = rng.sample(speaker_ids, n)
-
+    selected = rng.sample(sorted(speaker_files), n)
     return {sid: SpeechCommandsDataset(speaker_files[sid]) for sid in selected}
+
+
+def build_speech_eval(data_dir: str, split: str) -> SpeechCommandsDataset:
+    """All clips of the official 'validation' or 'testing' split, sorted by path."""
+    if split not in ("validation", "testing"):
+        raise ValueError(f"split must be 'validation' or 'testing', got {split!r}")
+    data_dir = Path(data_dir)
+    return SpeechCommandsDataset([str(data_dir / rel) for rel in official_split_files(str(data_dir))[split]])

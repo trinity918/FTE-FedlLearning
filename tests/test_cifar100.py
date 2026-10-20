@@ -10,6 +10,7 @@ import torch
 
 from fte_fl.data.cifar100 import (
     dirichlet_partition,
+    iid_partition,
     superclass_partition,
     SUPERCLASS_MAP,
     _SUPERCLASS_NAMES,
@@ -120,6 +121,29 @@ def test_dirichlet_partition_empty_clients_allowed():
     # some partitions may be empty
     empty = [p for p in parts if len(p) == 0]
     assert len(empty) >= 0  # just must not crash
+
+
+# ---- iid_partition ----
+
+def test_iid_partition_disjoint_complete_balanced():
+    parts = iid_partition(103, 10, seed=3)
+    allidx = np.concatenate(parts)
+    assert sorted(allidx.tolist()) == list(range(103))
+    assert {len(p) for p in parts} == {10, 11}
+    assert all(np.all(np.diff(p) > 0) for p in parts)
+
+
+def test_iid_partition_reproducible_and_seed_dependent():
+    a = iid_partition(50, 5, seed=1)
+    b = iid_partition(50, 5, seed=1)
+    c = iid_partition(50, 5, seed=2)
+    assert all(np.array_equal(x, y) for x, y in zip(a, b))
+    assert not all(np.array_equal(x, y) for x, y in zip(a, c))
+
+
+def test_iid_partition_rejects_more_clients_than_samples():
+    with pytest.raises(ValueError, match="num_clients <= num_samples"):
+        iid_partition(3, 4)
 
 
 # ---- superclass_partition ----
