@@ -4,6 +4,7 @@ Offline unit tests use synthetic labels only (no download).
 Real-data tests are marked with @pytest.mark.realdata:
     pytest -m realdata
 """
+from pathlib import Path
 import numpy as np
 import pytest
 import torch
@@ -18,7 +19,7 @@ from fte_fl.data.cifar100 import (
     build_cifar100_clients,
 )
 
-REAL_CIFAR_CACHE = "/home/shreesh/fte-fl/data_cache"
+REAL_CIFAR_CACHE = str(Path(__file__).resolve().parents[1] / "data_cache")
 
 
 # ---- SUPERCLASS_MAP structure ----

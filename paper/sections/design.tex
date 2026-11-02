@@ -1,0 +1,13 @@
+\section{System Design}
+
+\paragraph{EtF.}
+(1) Client $i$ sends $\mathrm{Enc}(u_i)$ to the aggregator. (2) The aggregator computes $\mathrm{Enc}(\|u_i-u_j\|^2)$ for all pairs by homomorphic subtraction and dot product. (3) The key holder decrypts \emph{only} these distances, runs Krum or Multi-Krum and returns the selection. (4) The aggregator forms $\sum_i w_i\mathrm{Enc}(u_i)$ with plaintext weights. (5) The key holder decrypts the aggregate. FedAvg skips steps 2--3. Trimmed mean and Bulyan are rejected at configuration, because they need coordinate-wise comparisons CKKS does not provide here.
+
+\paragraph{FTE.}
+(1) Client $i$ sends plaintext $u_i$ to the filter. (2) The filter computes a selection, per-client weights $a$ and optional per-coordinate mask $M$, and returns each contributor's $a_i$ and $M_i$. (3) Contributing clients send $\mathrm{Enc}(a_i(M_i\odot u_i))$ to the aggregator. (4) The aggregator sums homomorphically, and the key holder decrypts the sum. All five rules run, because filtering happens in plaintext.
+
+\paragraph{FTE with attestation.}
+Before step~1 each client publishes a Pedersen commitment to the SHA-256 digest of its update and a proof of knowledge, and sends the opening to the filter with the plaintext. The filter excludes any client whose proof or opening fails; the aggregator re-verifies each contributor's public proof. This binds what the filter saw to a public commitment. It does \emph{not} show that the later ciphertext encrypts the committed update (Section~\ref{sec:security}).
+
+\paragraph{Implementation.}
+CKKS uses TenSEAL 0.3.16~\cite{benaissa2021tenseal} with ring degree 16384, coefficient moduli $[60,40,40,60]$, scale $2^{40}$ and chunks of 8192 slots. Commitments use the RFC 3526 2048-bit MODP group. Updates are local minus global parameters and include floating-point BatchNorm buffers where a model has them, so robust rules filter those too.

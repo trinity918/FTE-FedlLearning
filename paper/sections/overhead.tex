@@ -1,0 +1,33 @@
+\section{Protocol Overhead}
+\label{sec:overhead}
+
+All protocols aggregated identical client updates, computed from the final global model of one attacked run on each dataset: scaling with Multi-Krum, seed~0. Rounds 101--103 on FEMNIST and 41--43 on Speech Commands sample different participants at that same model state. Each entry is one single-threaded execution of the round's whole aggregation, with client work timed serially, on an otherwise idle laptop. Because the model does not change between rounds, these are three samples of cost and not three independent experiments, and we report no intervals. Tables~\ref{tab:bench-femnist} and~\ref{tab:bench-speech} give the results.
+
+\begin{table}[H]
+\centering
+\caption{FEMNIST protocol cost per round: 20 clients, 161{,}438-dimensional updates, $f=4$. Time is the mean $\pm$ sample standard deviation over 3 rounds. Traffic is the sum of recorded payloads. ``Malicious kept'' counts participants the rule kept; trimmed mean and FedAvg keep all clients by construction, so it says nothing about their robustness.}
+\label{tab:bench-femnist}
+\resizebox{\linewidth}{!}{\input{tables/bench_femnist}}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Speech Commands protocol cost per round: 11 clients, BC-ResNet-8 updates, $f=2$. Columns as in Table~\ref{tab:bench-femnist}.}
+\label{tab:bench-speech}
+\resizebox{\linewidth}{!}{\input{tables/bench_speech}}
+\end{table}
+
+\paragraph{Fidelity.}
+In all 108 records of supported pairs, the protocol selected the same clients as its plaintext rule. No selection flipped in this sample, which does not prove that a near tie cannot flip one. The largest absolute difference from the plaintext aggregate was $3.2\times10^{-7}$ on FEMNIST. On Speech Commands every FTE record stayed below $10^{-7}$, while EtF FedAvg and EtF Multi-Krum reached $3.2\times10^{-5}$ and $8.6\times10^{-6}$ in the same rounds. We did not establish why these EtF differences are larger.
+
+\paragraph{Computation.}
+The dominant cost is EtF's encrypted distance computation. On FEMNIST, Krum under EtF took 267--358~s of its 320--411~s total on distances, against 11--17~s for FTE. On Speech Commands EtF Krum took 250--306~s against 21--32~s, with fewer clients and larger updates. Plaintext filtering itself took at most 0.21~s. Commitment, proof and verification steps took 6.2--11.3~s per round on FEMNIST and 3.5--6.3~s on Speech Commands.
+
+\paragraph{Communication.}
+FTE sends a plaintext update to the filter and then encrypted contributions only from selected clients, so its traffic depends on the rule. It is lowest for Krum, about 60~MB on FEMNIST against 443~MB for EtF, because a single client contributes. With FedAvg and trimmed mean no client is excluded, so FTE sends everything twice and exceeds EtF FedAvg (310~MB against 280~MB on FEMNIST). Attestation adds 51~KB per round on FEMNIST and 28~KB on Speech Commands.
+
+\paragraph{Rules.}
+EtF cannot run trimmed mean or Bulyan, because both need coordinate-wise comparison. FTE runs all five rules at similar cost, and this expressiveness is what its plaintext visibility buys.
+
+\paragraph{Timing quality.}
+Per-round times varied by up to about 40\% for the same pair on the same data shape, which we attribute to no specific cause. The laptop's clock behaviour was not controlled, and neither its power source nor its Windows power mode was recorded for each measurement. A power mode found after the benchmarks had slowed background runs about 2.5 times, so it may have affected them. Ratios of an order of magnitude are robust to this; differences of a few seconds are not.

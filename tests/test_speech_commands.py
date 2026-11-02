@@ -32,8 +32,9 @@ from fte_fl.data.speech_commands import (
     SpeechCommandsDataset,
     SPEECH_LABELS,
 )
+from fte_fl.fl.data import native_path
 
-REAL_SC_DIR = "/mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02"
+REAL_SC_DIR = native_path("/mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02")
 
 
 def _make_mock_wav(path, duration=1.0, sample_rate=16000, freq=1000.0):

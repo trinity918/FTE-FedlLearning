@@ -1,0 +1,26 @@
+\begin{tabular}{llccccc}
+\toprule
+Protocol & Rule & Time (s) & Traffic (MB) & Selection = plaintext & Max error & Malicious kept \\
+\midrule
+Plaintext & FedAvg & 0.0 $\pm$ 0.0 & 32.0 & 3/3 & 0.0e+00 & 2 \\
+Plaintext & Krum & 0.1 $\pm$ 0.0 & 32.0 & 3/3 & 0.0e+00 & 0 \\
+Plaintext & Multi-Krum & 0.1 $\pm$ 0.0 & 32.0 & 3/3 & 0.0e+00 & 0 \\
+Plaintext & Trimmed mean & 0.2 $\pm$ 0.0 & 32.0 & 3/3 & 0.0e+00 & 2 \\
+Plaintext & Bulyan & 0.2 $\pm$ 0.0 & 32.0 & 3/3 & 0.0e+00 & 0 \\
+EtF & FedAvg & 41.3 $\pm$ 8.7 & 353.7 & 3/3 & 3.2e-05 & 2 \\
+EtF & Krum & 287.0 $\pm$ 32.1 & 460.1 & 3/3 & 2.5e-08 & 0 \\
+EtF & Multi-Krum & 298.2 $\pm$ 23.7 & 451.2 & 3/3 & 8.6e-06 & 0 \\
+EtF & Trimmed mean & \multicolumn{5}{c}{unsupported} \\
+EtF & Bulyan & \multicolumn{5}{c}{unsupported} \\
+FTE & FedAvg & 44.3 $\pm$ 3.0 & 394.6 & 3/3 & 9.1e-08 & 2 \\
+FTE & Krum & 27.3 $\pm$ 5.5 & 98.6 & 3/3 & 2.4e-08 & 0 \\
+FTE & Multi-Krum & 36.8 $\pm$ 7.3 & 335.4 & 3/3 & 7.6e-08 & 0 \\
+FTE & Trimmed mean & 41.7 $\pm$ 9.5 & 394.6 & 3/3 & 7.7e-08 & 2 \\
+FTE & Bulyan & 36.7 $\pm$ 8.6 & 276.2 & 3/3 & 6.4e-08 & 0 \\
+FTE+attestation & FedAvg & 47.6 $\pm$ 10.6 & 394.6 & 3/3 & 8.2e-08 & 2 \\
+FTE+attestation & Krum & 33.1 $\pm$ 7.5 & 98.6 & 3/3 & 2.6e-08 & 0 \\
+FTE+attestation & Multi-Krum & 44.9 $\pm$ 10.2 & 335.4 & 3/3 & 8.0e-08 & 0 \\
+FTE+attestation & Trimmed mean & 47.4 $\pm$ 10.8 & 394.6 & 3/3 & 7.9e-08 & 2 \\
+FTE+attestation & Bulyan & 44.4 $\pm$ 3.6 & 276.2 & 3/3 & 7.1e-08 & 0 \\
+\bottomrule
+\end{tabular}

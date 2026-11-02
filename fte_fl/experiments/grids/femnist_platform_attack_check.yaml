@@ -1,0 +1,34 @@
+description: Windows replays of attacked Linux runs from femnist_main_lr0.1 with the identical configuration, for
+  fte_fl.eval.platform_check. The main grid's attacked conditions straddle platforms; these runs measure how far
+  that matters under attack (the first replay, honest__fedavg, is honest).
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6_windows/platform_check
+seeds:
+- 0
+common:
+  experiment.rounds: 100
+  experiment.clients_per_round: 20
+  experiment.lr: 0.1
+  experiment.local_epochs: 3
+  runtime.torch_threads: 1
+runs:
+  scaling__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  signflip__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip

@@ -1,0 +1,29 @@
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+\paragraph{Simulation.}
+All parties run in one process on one machine. There is no network, so traffic is counted from serialized sizes and no latency is measured. Client work is timed serially. Timings come from a single CPU-only laptop and describe relative cost on that machine.
+
+\paragraph{Datasets and partitions.}
+FEMNIST uses LEAF's per-sample split, so writers appear in both training and test sets and accuracy is not a measure of generalisation to new writers. Speech Commands uses 200 of the training speakers, 7{,}698 clips, because of CPU cost, so its results do not show what BC-ResNet reaches on the full split.
+
+\paragraph{Training length.}
+Speech Commands ran for 40 rounds, which is not convergence. Its results describe early federated training and must not be read as final accuracy.
+
+\paragraph{Statistics.}
+Three seeds per condition give wide intervals. We report intervals, not significance tests, and a non-overlapping pattern in this data is weak evidence.
+
+\paragraph{Attacks.}
+The scaling, sign-flip, zero and Gaussian attacks are simple, and they do not adapt to the defense. ALIE is the only attack that uses the honest distribution, and it estimates that distribution from malicious clients' honest updates. The backdoor is a DBA-style adaptation rather than an exact reproduction of DBA, and on Speech Commands its trigger is built in feature space and is not a physical audio signal. No evaluated attack exploits the gap between a committed update and its ciphertext (Section~\ref{sec:security}).
+
+\paragraph{BatchNorm statistics.}
+BC-ResNet's running statistics are aggregated with the weights, so robust rules filter them. An attacked aggregate can therefore leave a negative running variance, and the simulator fails rather than clamping it. These failures are reported as divergence. A deployment would have to decide how to validate such buffers, and the results here do not show which choice is best.
+
+\paragraph{Models.}
+LoRA-AST has a randomly initialised frozen backbone, is not pretrained, and stayed close to chance in our centralised sanity runs, so it received no attack grid. ViT-Tiny and LoRA-ViT were exercised only in smoke and pilot runs. Nothing here shows how transformers with pretrained backbones behave under these protocols.
+
+\paragraph{Cryptography.}
+The CKKS parameters are not an independently evaluated security claim, and CKKS is approximate, so selection and aggregates are compared with plaintext within a tolerance. EtF supports distance-based rules only, because trimmed mean and Bulyan need coordinate-wise comparisons. Decrypted aggregates are published without noise flooding, so IND-CPA$^D$ protection is not provided.
+
+\paragraph{Future work.}
+The most valuable next step is removing the plaintext filter's visibility, either with a trusted execution environment or with secure multi-party filtering. Others are proving that a ciphertext encrypts the filtered update, adding threshold decryption, testing adaptive attacks and pretrained transformer backbones, and running on a real network.

@@ -1,0 +1,12 @@
+\section{Related Work}
+
+\paragraph{Byzantine attacks and defenses.}
+Fang et al.\ showed that attackers who tailor their updates to a known aggregation rule can substantially degrade robust rules~\cite{fang2020local}. ALIE keeps malicious updates within the honest spread so distance-based filters accept them~\cite{baruch2019alie}, and DBA splits a backdoor trigger across colluding clients~\cite{xie2020dba}. Defenses beyond the classical rules use additional assumptions: FLTrust relies on a small server-held root dataset~\cite{cao2021fltrust}, and FLAME combines clustering, clipping and noise against backdoors~\cite{nguyen2022flame}.
+
+\paragraph{Privacy-preserving robust aggregation.}
+Secure aggregation hides individual updates behind pairwise masks~\cite{bonawitz2017secagg}, which by design removes what robust rules inspect. BREA combines stochastic quantization, verifiable outlier detection and secure aggregation in a single-server design~\cite{so2021brea}. RoFL adds zero-knowledge range proofs on update norms to secure aggregation~\cite{lycklama2023rofl}. ELSA uses two servers in separate trust domains~\cite{rathee2023elsa}.
+
+Homomorphic approaches compute a robustness statistic over encrypted updates. PEFL uses a two-server design with a Pearson-correlation filter~\cite{liu2021pefl}, and a later analysis reported that one party learns all gradient vectors in the clear~\cite{schneider2023peflcomments}. ShieldFL uses two-trapdoor homomorphic encryption with a cosine-similarity defense~\cite{ma2022shieldfl}. That critique of PEFL is a reason to state plainly who sees what, as we do for each ordering in Section~\ref{sec:security}.
+
+\paragraph{Where this work differs.}
+These systems each propose one design. We compare two orderings of the same two operations within one codebase, on identical updates, with the same rules and attacks. EtF as implemented here is not one of the published systems above, and FTE is deliberately the simplest baseline: it makes the trust trade-off explicit rather than hiding it. We report no comparison with the accuracy or cost of the cited systems because we did not run them.

@@ -179,6 +179,62 @@ def test_client_sampling_is_deterministic_and_valid():
     assert [sample_participants(other, r) for r in range(1, 6)] != rounds
 
 
+def _strat(mpr=2, num_mal=4, **attack):
+    raw = _raw(k=6, rounds=5, num_clients=12,
+               attack={"type": "sign_flip", "num_malicious": num_mal, **attack},
+               sampling="stratified", malicious_per_round=mpr)
+    return raw
+
+
+def test_stratified_sampling_fixes_malicious_count_per_round():
+    cfg = parse_sim_config(_strat())
+    mal = fl_attacks.choose_malicious(12, cfg.attack)
+    for r in range(1, 6):
+        p = sample_participants(cfg, r, mal)
+        assert p == sample_participants(cfg, r, mal) == sorted(p) and len(set(p)) == 6
+        assert sum(c in mal for c in p) == 2
+    assert len({tuple(sample_participants(cfg, r, mal)) for r in range(1, 6)}) > 1
+    with pytest.raises(ValueError, match="malicious client set"):
+        sample_participants(cfg, 1, [])
+
+
+def test_uniform_sampling_unchanged_by_malicious_argument():
+    cfg = parse_sim_config(_raw(k=4))
+    assert sample_participants(cfg, 3, [1, 2]) == sample_participants(cfg, 3)
+
+
+@pytest.mark.parametrize("raw, match", [
+    (_strat(mpr=5), "must be <= num_malicious"),
+    (_strat(mpr=6, num_mal=8), "< clients_per_round"),
+    (_strat(mpr=1, num_mal=10), "not enough honest clients"),
+    ({**_raw(sampling="stratified", malicious_per_round=1)}, "needs malicious clients"),
+    (_raw(malicious_per_round=1), "requires sampling 'stratified'"),
+    (_raw(sampling="random"), "'uniform' or 'stratified'"),
+])
+def test_invalid_sampling_configs_rejected(raw, match):
+    with pytest.raises(ValueError, match=match):
+        parse_sim_config(raw)
+
+
+def test_alie_under_stratified_sampling_checks_per_round_count():
+    raw = _strat(mpr=1)
+    raw["attack"] = {"type": "alie", "num_malicious": 4, "z": 1.0}
+    with pytest.raises(ValueError, match="malicious_per_round >= 2"):
+        parse_sim_config(raw)
+    raw = _strat(mpr=3)
+    raw["attack"] = {"type": "alie", "num_malicious": 4, "z": "z_max"}
+    parse_sim_config(raw)                       # n=6, m=3: s = 4 - 3 = 1, valid
+    raw = _strat(mpr=4)
+    raw["attack"] = {"type": "alie", "num_malicious": 4, "z": "z_max"}
+    with pytest.raises(ValueError, match="s = floor"):        # n=6, m=4: s = 0
+        parse_sim_config(raw)
+
+
+def test_stratified_run_records_fixed_malicious_count(tmp_path):
+    run_simulation(_strat(), tmp_path / "r")
+    assert all(r["filtering"]["malicious_participants"] == 2 for r in _metrics(tmp_path / "r"))
+
+
 def test_derive_seed_depends_on_every_key():
     base = derive_seed(1, 2, 3)
     assert base == derive_seed(1, 2, 3)

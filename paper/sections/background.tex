@@ -1,0 +1,10 @@
+\section{Background}
+
+\paragraph{Robust aggregation.}
+Given $n$ updates of which at most $f$ are assumed Byzantine, Krum selects the update minimising the sum of squared distances to its $n-f-2$ nearest neighbours; Multi-Krum averages the $m$ best-scoring updates, here $m=n-f$~\cite{blanchard2017krum}. Coordinate-wise trimmed mean removes the $b$ largest and $b$ smallest values per coordinate~\cite{yin2018trimmed}. Bulyan selects $\theta=n-2f$ updates by repeated Krum, then averages per coordinate the $\beta=\theta-2f$ values closest to the median, and requires $n\geq 4f+3$~\cite{elmhamdi2018bulyan}.
+
+\paragraph{CKKS.}
+CKKS encrypts vectors of real numbers and supports approximate addition and multiplication~\cite{cheon2017ckks}. Decryption returns a value close to, not equal to, the input. The scheme is therefore approximate by construction, and its decryption output needs care: Li and Micciancio showed that sharing decrypted CKKS results can enable key recovery under a stronger model (IND-CPA$^D$), and that standard IND-CPA security does not exclude it~\cite{li2021ckkssecurity}. CKKS as used here has no comparison operation, so coordinate-wise order statistics, and hence trimmed mean and Bulyan, cannot be computed under encryption.
+
+\paragraph{Commitments and proofs.}
+A Pedersen commitment $C=g^m h^r \bmod p$ is perfectly hiding and computationally binding under discrete-log hardness~\cite{pedersen1991commit}. Our clients additionally give a Fiat--Shamir proof of knowledge of $(m,r)$ in the Okamoto/Schnorr style~\cite{schnorr1991signature}, bound to the round and client identifiers.

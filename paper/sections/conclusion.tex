@@ -1,0 +1,6 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We compared Encrypt-then-Filter and Filter-then-Encrypt over identical client updates and evaluated five aggregation rules under seven attacks on FEMNIST and a smaller grid on Speech Commands. Where both orderings run a rule, they selected the same clients as the plaintext rule in every supported record, so the choice between them does not change the decision. It changes the cost, by about an order of magnitude or more for Krum, and it changes who can see what. FTE is cheaper and supports more rules, and in exchange a filter sees every plaintext update. Attestation binds what a client showed the filter, at modest cost, and it does not make an update honest.
+
+No rule we tested was robust in general. Each one lost accuracy without an attack, and most lost it again under attacks that did not harm FedAvg. Scaling was the one FEMNIST attack where a robust rule gained, while a zero-update attack almost stopped Krum's training. Rejection rates were often indiscriminate, so filtering should not be read as detection. These results come from a small number of seeds, non-adaptive attacks and one laptop, and they support a narrow conclusion: choose the rule for the specific threat, and choose the ordering for the cost and exposure you can accept.

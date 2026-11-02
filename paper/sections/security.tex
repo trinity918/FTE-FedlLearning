@@ -1,0 +1,35 @@
+\section{Security Analysis}
+\label{sec:security}
+
+\begin{table}[H]
+\centering
+\caption{What each party sees. ``Enc'' denotes ciphertexts it cannot decrypt.}
+\label{tab:visibility}
+\begin{tabular}{lll}
+\toprule
+Party & EtF & FTE (with or without attestation) \\
+\midrule
+Aggregator & Enc$(u_i)$, Enc(distances), Enc(sum) & Enc$(a_i M_i\odot u_i)$ of contributors, Enc(sum) \\
+Key holder & Pairwise distances, the aggregate & The aggregate \\
+Filter & (none) & \textbf{Every plaintext update}, and openings \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Enforced by code and tests.}
+The aggregator is built from a serialized public context, a context carrying the secret key is rejected, and it accepts only serialized ciphertexts. Protocol aggregates match the plaintext rules within CKKS tolerance on real arithmetic. A client whose plaintext differs from its commitment is excluded even if its proof verifies. Altered, random, wrong-round and replayed proofs fail.
+
+\paragraph{Assumed, not established.}
+Binding of the commitment rests on discrete-log hardness in the chosen group, an unknown $\log_g h$, and SHA-256 collision resistance. Fiat--Shamir soundness and zero knowledge hold in the random-oracle model. CKKS semantic security of these TenSEAL parameters was not independently evaluated. Attacks in the IND-CPA$^D$ setting~\cite{li2021ckkssecurity} are relevant because decrypted aggregates are published; we add no noise flooding, so that protection is not provided.
+
+\paragraph{Missing guarantees.}
+\begin{itemize}
+\item \textbf{FTE gives no privacy from the filter.} This is the central cost of the ordering. Gradient inversion~\cite{zhu2019dlg,geiping2020inverting} applies to a curious filter. The filter must be trusted, or be realised in hardware or by secure computation, neither of which is implemented.
+\item \textbf{Pairwise distances leak in EtF.} The key holder learns all $\|u_i-u_j\|^2$. How much this reveals about the updates is not quantified here.
+\item \textbf{Nothing proves that a ciphertext encrypts the committed or filtered update.} A malicious client in attested FTE can pass the filter with an acceptable update, then encrypt a different one. The evaluated attacks do not exploit this, so measured robustness does not cover it.
+\item \textbf{Nothing proves that the filter or key holder followed the protocol.} There is no verifiable filtering and no threshold decryption, and a key holder could decrypt individual ciphertexts.
+\item \textbf{No update-validity check,} such as the norm proofs of RoFL~\cite{lycklama2023rofl}.
+\end{itemize}
+
+\paragraph{Practical reading.}
+EtF concentrates trust in a key holder that must not collude with the aggregator. FTE adds a party with full plaintext visibility. FTE is defensible only where such a party already exists or can be built, and that argument belongs to the deployment rather than to this paper's measurements.

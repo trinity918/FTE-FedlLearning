@@ -1,0 +1,39 @@
+description: 'Speech Commands learning-rate and runtime pilot, native Windows. 200 official training speakers, one
+  client each, 20 clients per round, 2 local epochs, batch 32, 15 rounds, honest clients, FedAvg. Evaluation on a
+  seeded 1000-clip subset of each held-out split. The learning rate of the main grid is chosen here on VALIDATION
+  accuracy only. Features come from the verified cache (fte_fl.data.speech_cache).'
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6_windows/speech_lr_pilot
+seeds:
+- 0
+common:
+  experiment.dataset: speech_commands
+  experiment.rounds: 15
+  experiment.clients_per_round: 20
+  experiment.local_epochs: 2
+  experiment.batch_size: 32
+  experiment.max_eval_samples: 1000
+  runtime.torch_threads: 1
+  defense.name: fedavg
+  defense.f: null
+  datasets.speech_commands.num_clients: 200
+  datasets.speech_commands.feature_cache: data_cache/speech_logmel
+runs:
+  bcres__lr0.02:
+    experiment.model: bc_resnet1
+    experiment.lr: 0.02
+  bcres__lr0.05:
+    experiment.model: bc_resnet1
+    experiment.lr: 0.05
+  bcres__lr0.1:
+    experiment.model: bc_resnet1
+    experiment.lr: 0.1
+  ast__lr0.05:
+    experiment.model: lora_ast
+    experiment.lr: 0.05
+  ast__lr0.1:
+    experiment.model: lora_ast
+    experiment.lr: 0.1
+  ast__lr0.2:
+    experiment.model: lora_ast
+    experiment.lr: 0.2

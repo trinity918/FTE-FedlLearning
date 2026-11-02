@@ -5,17 +5,39 @@ in Byzantine-robust federated learning.
 
 ## Environment
 
-WSL2 Ubuntu 22.04, Python 3.10, CPU-only PyTorch. No GPU required.
+CPU-only PyTorch; no GPU required. Two platforms have produced results, and
+each run records its own in `config.json`:
 
-```bash
-cd ~/fte-fl
-source .venv/bin/activate
+| Platform | Python | Used for |
+|---|---|---|
+| WSL2 Ubuntu 22.04 | 3.10.12 | Milestones 0-5, the first 45 runs of the main FEMNIST grid |
+| Native Windows 11 | 3.11.9 | everything since 2026-11-01 |
+
+Both use numpy 2.2.6, scipy 1.15.3, torch 2.14.1+cpu, torchvision 0.29.1+cpu,
+tenseal 0.3.16, timm 1.0.30 and PyYAML 6.0.3.
+
+### Windows setup (PowerShell)
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cpu
+pip install numpy==2.2.6 scipy==1.15.3 tenseal==0.3.16 timm==1.0.30 PyYAML==6.0.3
+pip install -e ".[dev]"
 ```
 
-Fresh setup (if starting from scratch):
+Datasets are found at the paths in `fte_fl/configs/default.yaml`. Those paths
+are written `/mnt/c/...` and stay that way, because the raw config is part of
+the config hash that resuming validates; `native_path` in `fte_fl/fl/data.py`
+maps them to `C:/...` when the data is loaded. To use another location, pass
+`--set datasets.<name>.<dir key>=...`.
+
+Runs are not bitwise identical across the two platforms: see
+`results/PAPER_NOTES.md`, Milestone 6, "Platform comparison".
+
+### Linux / WSL setup
 
 ```bash
-cd ~/fte-fl
 python3.10 -m venv .venv
 source .venv/bin/activate
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
@@ -211,7 +233,7 @@ Limitations:
   that filtering was correct, or that an update is valid, and it gives no
   privacy from the filter. Binding, hiding, soundness and zero knowledge are
   standard assumptions, not tested properties.
-- Robustness has not been measured in training.
+- Robustness results are in `paper/` and `results/PAPER_NOTES.md`, Milestone 6.
 
 Details and caveats: `results/PAPER_NOTES.md`.
 
@@ -304,6 +326,78 @@ Definitions, threat model, limitations and smoke-test results:
 `results/PAPER_NOTES.md`. Unit tests and smoke runs validate the
 implementation; they are not evidence of robustness.
 
+## Experiments (Milestone 6)
+
+Grids of runs × seeds are YAML specs in `fte_fl/experiments/grids/`:
+`femnist_lr_sweep.yaml` (hyperparameter selection by training loss),
+`femnist_main.yaml` (lr 0.2; stopped, kept as the record of its divergence),
+`femnist_stability_lr0.1.yaml` (diagnostic seeds 200–202) and
+`femnist_main_lr0.1.yaml` (the main grid):
+
+```bash
+python -m fte_fl.experiments.grid fte_fl/experiments/grids/femnist_main_lr0.1.yaml --jobs 3 --only honest__
+python -m fte_fl.experiments.grid fte_fl/experiments/grids/femnist_main_lr0.1.yaml --jobs 3
+python -m fte_fl.eval.analyze results/runs/m6/femnist_main_lr0.1     # -> _analysis/
+```
+
+- `grid.py` runs each job as its own process; completed jobs are skipped,
+  partial ones resumed, early failures (no `config.json`) renamed to
+  `seed<N>.failed-<time>` and retried; a run whose `summary.json` records a
+  failure (e.g. divergence) is a result and is not rerun. Every attempt is
+  logged in `_grid_log.jsonl` as it happens, with the memory readings at
+  each launch.
+- Memory guard: launches are serialised. A job starts only if
+  min(available) − `--job-mb` (700) ≥ `--min-available-mb` (1024), where
+  "available" is the VM's MemAvailable and, under WSL, the Windows host's
+  Available MBytes (read through `powershell.exe`; the VM's figure did not
+  show the host pressure that stopped two grids). When memory is short the
+  runner waits for one of its own jobs to finish; if none is running, or
+  memory cannot be read, it launches nothing more and reports the rest as
+  `not_started_low_memory` / `not_started_memory_unknown`. Other programs'
+  memory use after a launch is not controlled. A FEMNIST process peaks at
+  ~620 MB (1.5 GB before the loader converted each LEAF JSON file to arrays
+  as it is read; arrays are bitwise identical).
+- `analyze.py` refuses incomplete, failed or inconsistent groups (missing
+  rounds, seeds whose configs differ beyond the seed) and writes
+  `summary.csv`, `summary.md`, `problems.txt` and per-group plots with mean ±
+  sample std across seeds.
+- `protocol_bench.py` aggregates IDENTICAL client updates under plaintext,
+  EtF, FTE and FTE + attestation for every rule, records unsupported pairs
+  with their validation error, and compares selections and aggregates with
+  plaintext:
+
+```bash
+python -m fte_fl.experiments.protocol_bench --config fte_fl/configs/default.yaml \
+    --out results/runs/m6/protocol_bench --checkpoint <run>/checkpoint.pt \
+    --rounds 101 102 103 --budget 4 --set ...   # exact command: results/PAPER_NOTES.md
+```
+
+`experiment.sampling: stratified` with `experiment.malicious_per_round`
+fixes the number of malicious participants per round (uniform sampling
+makes it random, so rounds can exceed the defense budget and ALIE, which
+needs ≥ 2 malicious participants, fails). Results and their provenance:
+`results/PAPER_NOTES.md`, Milestone 6.
+
+Grids added for the Windows runs (outputs under `results/runs/m6_windows/`, full
+commands in `docs/REPRODUCTION.md`):
+
+- `femnist_stratified_control.yaml`: honest behaviour under the attacked runs'
+  stratified sampling (`scaling` with γ = 1.0 is an exact no-op), to measure the
+  uniform-versus-stratified confound in the main grid.
+- `femnist_platform_attack_check.yaml`: attacked Windows replays of Linux runs.
+- `femnist_stratified_control_rerun.yaml`, `femnist_platform_attack_check_rerun.yaml`:
+  the same runs in new directories, replacing 14 runs invalidated by two queues
+  writing to one directory; `analyze` refuses the invalid ones.
+- `speech_lr_pilot.yaml` (stopped, kept), `speech_pilot_v2.yaml` (selects lr 0.2)
+  and `speech_main_bcres_seed{0,1,2}.yaml` (the Speech main grid).
+
+`scripts/run_queue.sh` runs grids one after another at 3 jobs (`JOBS`) with a
+3.5 GB launch floor, retrying only stages that stopped on low memory. `fte_fl/eval/full_eval.py`
+scores final Speech checkpoints on the full test split and refuses a checkpoint
+that does not replay its recorded subset accuracy. `fte_fl/eval/paper_artifacts.py`
+writes the paper's tables and figures; a diverged run prints as `div. round R`,
+never as a missing cell.
+
 ## Datasets
 
 ### FEMNIST (LEAF-preprocessed)
@@ -361,6 +455,19 @@ Verify:
 ```bash
 python -m fte_fl.data.verify_datasets --seed 42 --dataset speech
 ```
+
+**Feature cache.** `wav_to_logmel` costs ~28 ms per clip, so full-scale runs
+read precomputed features instead. Build once, then opt in with
+`datasets.speech_commands.feature_cache: data_cache/speech_logmel`:
+
+```bash
+python -m fte_fl.data.speech_cache --data-dir <speech_commands_v0.02> --out data_cache/speech_logmel --workers 3
+```
+
+The cache stores one `.npy` shard per word (2.55 GB), and the build resumes.
+After building it compares 500 random clips with `wav_to_logmel` bit for bit,
+at one torch thread: FFT rounding depends on the thread count (differences up
+to 1e-6 were measured at 4 and 8 threads).
 
 ### CIFAR-100
 

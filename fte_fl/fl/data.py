@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,7 +43,8 @@ _DATASET_KEYS = {
     "synthetic": {"num_clients", "num_classes", "samples_per_client", "test_samples", "dim",
                   "separation"},
     "femnist": {"train_dir", "test_dir", "num_clients", "max_samples_per_client"},
-    "speech_commands": {"data_dir", "num_clients", "max_samples_per_client", *SPEECH_FEATURES},
+    "speech_commands": {"data_dir", "num_clients", "max_samples_per_client", "feature_cache",
+                        *SPEECH_FEATURES},
     "cifar100": {"cache_dir", "num_clients", "partition", "alpha", "max_samples_per_client"},
 }
 
@@ -156,15 +159,17 @@ def _femnist(cfg: SimConfig, p: dict) -> FederatedData:
                     "test_writers": len(users)})
 
 
-def _speech_tensors(ds, indices) -> tuple[torch.Tensor, torch.Tensor]:
-    xs = [ds[int(i)][0] for i in indices]
+def _speech_tensors(ds, indices, cache=None) -> tuple[torch.Tensor, torch.Tensor]:
+    xs = [ds[int(i)][0] if cache is None else cache.get(ds.filepaths[int(i)]) for i in indices]
     ys = [ds.labels[int(i)] for i in indices]
     return torch.stack(xs), torch.tensor(ys, dtype=torch.int64)
 
 
 def _speech(cfg: SimConfig, p: dict) -> FederatedData:
+    from fte_fl.data.speech_cache import SpeechFeatureCache
     from fte_fl.data.speech_commands import build_speech_clients, build_speech_eval
 
+    cache = SpeechFeatureCache(p["feature_cache"]) if p.get("feature_cache") else None
     for key, value in SPEECH_FEATURES.items():
         if key in p and p[key] != value:
             raise ValueError(f"datasets.speech_commands.{key}={p[key]!r} is not supported; "
@@ -175,13 +180,14 @@ def _speech(cfg: SimConfig, p: dict) -> FederatedData:
     clients = []
     for i, (sid, ds) in enumerate(raw.items()):
         keep = _subset(len(ds), p.get("max_samples_per_client"), cfg.seed, 1000 + i)
-        clients.append(ClientData(sid, *_speech_tensors(ds, keep)))
+        clients.append(ClientData(sid, *_speech_tensors(ds, keep, cache)))
     evals = {}
     for key, split in ((0, "testing"), (1, "validation")):
         ds = build_speech_eval(p["data_dir"], split)
-        evals[split] = _speech_tensors(ds, _subset(len(ds), cfg.max_eval_samples, cfg.seed, key))
+        evals[split] = _speech_tensors(ds, _subset(len(ds), cfg.max_eval_samples, cfg.seed, key), cache)
     return _finish("speech_commands", clients, evals["testing"], evals["validation"], 35, cfg,
-                   {"data_dir": p["data_dir"], "split": "official validation/testing lists"})
+                   {"data_dir": p["data_dir"], "split": "official validation/testing lists",
+                    "feature_cache": p.get("feature_cache")})
 
 
 def _cifar100(cfg: SimConfig, p: dict) -> FederatedData:
@@ -218,8 +224,22 @@ def _cifar100(cfg: SimConfig, p: dict) -> FederatedData:
                    {"cache_dir": p["cache_dir"], "partition": partition, "alpha": p.get("alpha")})
 
 
+_DIR_KEYS = ("train_dir", "test_dir", "data_dir")
+
+
+def native_path(path: str) -> str:
+    """On Windows, the drive path of a WSL-style /mnt/<drive>/... config path.
+
+    Configs keep their /mnt paths because a run's raw config is part of its
+    config hash: rewriting them would break resuming, and comparing with, runs
+    recorded under WSL.  The files are the same either way."""
+    if sys.platform == "win32" and re.match(r"/mnt/[a-zA-Z]/", path):
+        return f"{path[5].upper()}:/{path[7:]}"
+    return path
+
+
 def build_federated_data(cfg: SimConfig) -> FederatedData:
-    p = cfg.dataset_params
+    p = {k: native_path(v) if k in _DIR_KEYS else v for k, v in cfg.dataset_params.items()}
     unknown = set(p) - _DATASET_KEYS[cfg.dataset]
     if unknown:
         raise ValueError(f"unknown key(s) in datasets.{cfg.dataset}: {sorted(unknown)}")

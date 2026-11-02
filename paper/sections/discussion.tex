@@ -1,0 +1,20 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{What the ordering changes.}
+On identical updates, both orderings selected the same clients as the plaintext rule in every supported record, so where they overlap the ordering did not change the rule's decision. It changed three things: which rules can run, what they cost, and who sees what. EtF Krum took about 25 times as long per FEMNIST round as FTE Krum and about 10 times as long on Speech Commands, and it sent about 7 and 5 times as much traffic. These ratios shrink for Multi-Krum, whose traffic differs by less than a factor of 2, because FTE then encrypts most clients' updates as well. In return FTE's filter sees every update in plaintext, which is the exposure encryption was meant to remove.
+
+\paragraph{When the extra rules help.}
+FTE's main functional gain is that it can run trimmed mean and Bulyan. On FEMNIST clean accuracy these rules did not justify that gain. Multi-Krum, which EtF can also run, scored higher than both under every attack. The case for them comes from the backdoor. Multi-Krum's ASR was 1.000, the same as FedAvg, while Bulyan reached 0.130 and trimmed mean 0.427. These rules cost clean accuracy to get there, and Krum, which EtF can run, stayed near 0.05 on two seeds of three. A system that weighs backdoors heavily therefore has a reason to prefer a rule that EtF cannot run, though not a strong one. On Speech Commands trimmed mean held the backdoor at zero on one seed and failed on the other two. A system that mainly fears scaling has no such reason on FEMNIST. On Speech Commands the balance shifts, because trimmed mean finished every attack while FedAvg and Multi-Krum diverged under sign flip on every seed.
+
+\paragraph{A cheap attack can defeat a selective rule.}
+The zero attack needs no computation or knowledge of the model, and it stopped Krum's training almost completely on FEMNIST. It exploits the rule's preference for clustered updates, so the same behaviour should appear under EtF, where Krum picks the same clients. Attestation would not help either, since a client can validly commit to a zero update. A simple norm check might catch this attack, but we did not test one, and such a check needs plaintext or more encrypted computation.
+
+\paragraph{The model changes what robustness means.}
+FEMNIST's CNN has no BatchNorm, while BC-ResNet's running statistics pass through aggregation. On Speech Commands one bad update could end a run outright, so a rule's failure took a form that accuracy tables hide. Several differences are confounded here: the model, the dataset, the round count and the fraction of malicious participants. We cannot attribute the change to any one of them.
+
+\paragraph{Filtering is not detection.}
+A high TPR is not evidence that a rule identifies attackers. Krum's TPR comes from rejecting nearly everyone, and under ALIE Multi-Krum rejected honest clients more often than malicious ones. Where rejection was indiscriminate, any robustness comes from the aggregation rule's arithmetic and not from identifying attackers. This matters for attestation too: the proofs bind what a client showed the filter, and they say nothing about whether that update was honest.
+
+\paragraph{Robustness has a cost when no attack comes.}
+Every robust rule lost accuracy on honest FEMNIST runs, and only scaling gave any robust rule an accuracy gain over FedAvg. ALIE and label flipping did not hurt FedAvg under these settings. Our conditions may understate these attacks: 20\% of clients were malicious on FEMNIST, and the attacks did not adapt. Within these conditions, the choice to deploy a robust rule traded a measured cost against a threat that often did no measurable damage.

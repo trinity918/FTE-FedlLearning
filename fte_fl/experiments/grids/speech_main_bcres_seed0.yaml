@@ -1,0 +1,134 @@
+description: Speech Commands main grid (proposed extension; scaled to this CPU). BC-ResNet-8, 200 speakers, 11 clients/round,
+  lr 0.2 chosen on validation in speech_pilot_v2.yaml (the largest value tried), batch 8, 2 local epochs, 40 rounds.
+  36 of 200 clients malicious, stratified with exactly 2 per round; f=b=2. Honest runs use uniform sampling. 40
+  rounds is NOT convergence. The in-loop evaluation is a seeded 300-clip subset; final scores come from fte_fl.eval.full_eval.
+  The backdoor trigger is feature-space. Seed 0 of the grid; both seed files share one output_dir.
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6_windows/speech_main_bcres
+seeds:
+- 0
+common:
+  experiment.dataset: speech_commands
+  experiment.model: bc_resnet1
+  experiment.rounds: 40
+  experiment.clients_per_round: 11
+  experiment.local_epochs: 2
+  experiment.batch_size: 8
+  experiment.lr: 0.2
+  experiment.max_eval_samples: 300
+  runtime.torch_threads: 1
+  datasets.speech_commands.num_clients: 200
+  datasets.speech_commands.feature_cache: data_cache/speech_logmel
+runs:
+  honest__fedavg:
+    defense.name: fedavg
+    defense.f: null
+  honest__multikrum:
+    defense.name: multi_krum
+    defense.f: 2
+  honest__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 2
+  signflip__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  signflip__multikrum:
+    defense.name: multi_krum
+    defense.f: 2
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  signflip__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 2
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  scaling__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  scaling__multikrum:
+    defense.name: multi_krum
+    defense.f: 2
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  scaling__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 2
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  backdoor__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+    attack.speech_amplitude: 0.1
+    attack.speech_freq_hz: 1000.0
+  backdoor__multikrum:
+    defense.name: multi_krum
+    defense.f: 2
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+    attack.speech_amplitude: 0.1
+    attack.speech_freq_hz: 1000.0
+  backdoor__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 2
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 2
+    attack.num_malicious: 36
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+    attack.speech_amplitude: 0.1
+    attack.speech_freq_hz: 1000.0

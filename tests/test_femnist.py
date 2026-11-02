@@ -11,12 +11,13 @@ import torch
 from pathlib import Path
 
 from fte_fl.data.femnist import parse_leaf_json, FemnistDataset, build_femnist_clients
+from fte_fl.fl.data import native_path
 
-REAL_TRAIN = (
+REAL_TRAIN = native_path(
     "/mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase"
     "/leaf/data/femnist/data/train"
 )
-REAL_TEST = (
+REAL_TEST = native_path(
     "/mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase"
     "/leaf/data/femnist/data/test"
 )
@@ -174,6 +175,27 @@ def test_build_clients_sample_count_matches_writer(tmp_path):
     clients = build_femnist_clients(str(tmp_path / "train"), num_clients=3, seed=42)
     for ds in clients.values():
         assert len(ds) == 7
+
+
+def test_writer_split_across_files_is_concatenated_in_file_order(tmp_path):
+    from fte_fl.data.femnist import _load_all_users
+    rng = np.random.default_rng(0)
+    parts = []
+    for k in range(2):        # the same writer in two files, plus a writer only in the second
+        xs = rng.random((3 + k, 784)).tolist()       # float64 values, rounded when cast to float32
+        ys = [k, k + 1, k + 2, 9][:3 + k]
+        users = ["w0"] + (["w1"] if k else [])
+        data = {"users": users, "num_samples": [len(ys)] * len(users),
+                "user_data": {u: {"x": xs, "y": ys} for u in users}}
+        (tmp_path / f"part_{k}.json").write_text(json.dumps(data))
+        parts.append((xs, ys))
+    users = _load_all_users(tmp_path)
+    expected_x = np.array(parts[0][0] + parts[1][0], dtype=np.float32)   # the list-based result
+    assert users["w0"]["x"].dtype == np.float32 and users["w0"]["y"].dtype == np.int64
+    np.testing.assert_array_equal(users["w0"]["x"], expected_x)
+    np.testing.assert_array_equal(users["w0"]["y"], parts[0][1] + parts[1][1])
+    np.testing.assert_array_equal(users["w1"]["x"], np.array(parts[1][0], dtype=np.float32))
+    assert FemnistDataset(users["w0"])[4][0].shape == (1, 28, 28)
 
 
 # ---- Real-data tests (require FEMNIST dataset present) ----

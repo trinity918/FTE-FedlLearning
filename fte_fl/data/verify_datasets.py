@@ -19,11 +19,12 @@ import numpy as np
 import torch
 
 from fte_fl.config import set_seed, config_hash
+from fte_fl.fl.data import native_path
 
 
-# Default dataset paths (WSL2 mounts of Windows paths)
-FEMNIST_DIR = "/mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/data/femnist/data"
-SPEECH_COMMANDS_DIR = "/mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02"
+# Default dataset paths (WSL2 mounts of Windows paths; drive paths on native Windows)
+FEMNIST_DIR = native_path("/mnt/c/Users/Shreesh/Desktop/majorproj/fl_byzantine/justincase/leaf/data/femnist/data")
+SPEECH_COMMANDS_DIR = native_path("/mnt/c/Users/Shreesh/Desktop/majorproj/speech_commands_v0.02")
 CIFAR100_CACHE = "./data_cache"
 
 

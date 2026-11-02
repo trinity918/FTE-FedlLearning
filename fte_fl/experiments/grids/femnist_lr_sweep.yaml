@@ -1,0 +1,22 @@
+description: >
+  Milestone 6 hyperparameter selection for FEMNIST CnnSmall + honest FedAvg.
+  Selection criterion: mean LOCAL TRAINING loss over the last 10 rounds
+  (training data only); the test set is not used to choose.  One seed.
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6/femnist_lr_sweep
+seeds: [100]
+common:
+  experiment.rounds: 100
+  experiment.clients_per_round: 20
+  runtime.torch_threads: 1
+  defense.name: fedavg
+  defense.f: null
+runs:
+  lr0.02_e1: {experiment.lr: 0.02, experiment.local_epochs: 1}
+  lr0.05_e1: {experiment.lr: 0.05, experiment.local_epochs: 1}
+  lr0.1_e1: {experiment.lr: 0.1, experiment.local_epochs: 1}
+  lr0.2_e1: {experiment.lr: 0.2, experiment.local_epochs: 1}
+  lr0.02_e3: {experiment.lr: 0.02, experiment.local_epochs: 3}
+  lr0.05_e3: {experiment.lr: 0.05, experiment.local_epochs: 3}
+  lr0.1_e3: {experiment.lr: 0.1, experiment.local_epochs: 3}
+  lr0.2_e3: {experiment.lr: 0.2, experiment.local_epochs: 3}

@@ -1,0 +1,32 @@
+description: 'Second Speech Commands pilot, native Windows (proposed extension). speech_lr_pilot.yaml was stopped: at batch
+  32 and 2 local epochs a speaker of ~38 clips takes ~4 SGD steps per round, and BC-ResNet stayed at chance for 7 rounds
+  while its loss fell slowly. A centralized check (speech_sanity) showed BC-ResNet learns (val 0.24 after 400 steps, 45
+  ms/sample) and LoRA-AST on its random frozen backbone does not (val <= 0.10 after 1500 steps at lr 0.001-0.03, 6
+  ms/sample). Here: batch 8, 11 clients per round (the smallest n that admits Bulyan with f=2), 2 local epochs, 40 rounds,
+  seeded 300-clip in-loop evaluation. The learning rate is chosen on VALIDATION accuracy only.'
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6_windows/speech_pilot_v2
+seeds:
+- 0
+common:
+  experiment.dataset: speech_commands
+  experiment.rounds: 40
+  experiment.clients_per_round: 11
+  experiment.local_epochs: 2
+  experiment.batch_size: 8
+  experiment.max_eval_samples: 300
+  runtime.torch_threads: 1
+  defense.name: fedavg
+  defense.f: null
+  datasets.speech_commands.num_clients: 200
+  datasets.speech_commands.feature_cache: data_cache/speech_logmel
+runs:
+  bcres__lr0.1:
+    experiment.model: bc_resnet1
+    experiment.lr: 0.1
+  bcres__lr0.2:
+    experiment.model: bc_resnet1
+    experiment.lr: 0.2
+  ast__lr0.03:
+    experiment.model: lora_ast
+    experiment.lr: 0.03

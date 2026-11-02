@@ -1,0 +1,401 @@
+description: 'Milestone 6 main FEMNIST grid (plaintext protocol). CnnSmall, all 198 writers, 20 clients/round,
+  100 rounds, SGD lr 0.2, 3 local epochs (selected by training loss in femnist_lr_sweep.yaml), torch_threads
+  1. Attacked runs: 40 of 198 clients malicious (attack.seed 0, the same set for every seed and defense),
+  stratified sampling with exactly 4 malicious per round; defense budget f = b = 4. Honest runs use uniform
+  sampling.'
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6/femnist_main
+seeds:
+- 0
+- 1
+- 2
+common:
+  experiment.rounds: 100
+  experiment.clients_per_round: 20
+  experiment.lr: 0.2
+  experiment.local_epochs: 3
+  runtime.torch_threads: 1
+runs:
+  honest__fedavg:
+    defense.name: fedavg
+    defense.f: null
+  honest__krum:
+    defense.name: krum
+    defense.f: 4
+  honest__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+  honest__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+  honest__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+  signflip__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  signflip__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  signflip__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  signflip__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  signflip__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: sign_flip
+  scaling__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  scaling__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  scaling__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  scaling__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  scaling__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 10.0
+  zero__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: zero
+  zero__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: zero
+  zero__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: zero
+  zero__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: zero
+  zero__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: zero
+  gaussian__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: gaussian
+    attack.std: 0.05
+  gaussian__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: gaussian
+    attack.std: 0.05
+  gaussian__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: gaussian
+    attack.std: 0.05
+  gaussian__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: gaussian
+    attack.std: 0.05
+  gaussian__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: gaussian
+    attack.std: 0.05
+  alie__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: alie
+    attack.z: z_max
+  alie__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: alie
+    attack.z: z_max
+  alie__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: alie
+    attack.z: z_max
+  alie__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: alie
+    attack.z: z_max
+  alie__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: alie
+    attack.z: z_max
+  labelflip__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: label_flip
+    attack.source_class: 1
+    attack.target_class: 7
+    attack.poison_fraction: 1.0
+  labelflip__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: label_flip
+    attack.source_class: 1
+    attack.target_class: 7
+    attack.poison_fraction: 1.0
+  labelflip__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: label_flip
+    attack.source_class: 1
+    attack.target_class: 7
+    attack.poison_fraction: 1.0
+  labelflip__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: label_flip
+    attack.source_class: 1
+    attack.target_class: 7
+    attack.poison_fraction: 1.0
+  labelflip__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: label_flip
+    attack.source_class: 1
+    attack.target_class: 7
+    attack.poison_fraction: 1.0
+  backdoor__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+  backdoor__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+  backdoor__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+  backdoor__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed
+  backdoor__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: backdoor
+    attack.target_class: 0
+    attack.poison_fraction: 0.5
+    attack.trigger_mode: distributed

@@ -1,0 +1,4 @@
+results\runs\m6_windows\femnist_stratified_control\noop__bulyan\seed0: metrics do not hold exactly rounds 1..100
+results\runs\m6_windows\femnist_stratified_control\noop__fedavg\seed0: metrics do not hold exactly rounds 1..100
+results\runs\m6_windows\femnist_stratified_control\noop__krum\seed0: metrics do not hold exactly rounds 1..100
+results\runs\m6_windows\femnist_stratified_control\noop__multikrum\seed0: metrics do not hold exactly rounds 1..100

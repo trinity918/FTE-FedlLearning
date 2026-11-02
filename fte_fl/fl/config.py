@@ -36,7 +36,7 @@ BACKDOOR_DATASETS = ("femnist", "cifar100", "speech_commands")
 _EXPERIMENT_KEYS = {
     "dataset", "model", "rounds", "clients_per_round", "local_epochs", "batch_size",
     "optimizer", "lr", "momentum", "weight_decay", "protocol", "eval_batch_size",
-    "max_eval_samples",
+    "max_eval_samples", "sampling", "malicious_per_round",
 }
 _DEFENSE_KEYS = {"name", "f", "b", "m", "fedavg_weighting"}
 _ATTACK_KEYS = {
@@ -151,6 +151,8 @@ class SimConfig:
     momentum: float
     weight_decay: float
     protocol: str
+    sampling: str                        # "uniform" or "stratified"
+    malicious_per_round: int | None      # stratified only
     eval_batch_size: int
     max_eval_samples: int | None
     defense: DefenseConfig
@@ -161,7 +163,8 @@ class SimConfig:
 
 
 def _parse_attack(a: dict, dataset: str, num_classes: int, num_clients: int,
-                  rounds: int, clients_per_round: int) -> AttackConfig:
+                  rounds: int, clients_per_round: int,
+                  malicious_per_round: int | None = None) -> AttackConfig:
     _check_keys(a, _ATTACK_KEYS, "attack")
     kind = a.get("type", "none")
     if kind not in ATTACKS:
@@ -193,9 +196,13 @@ def _parse_attack(a: dict, dataset: str, num_classes: int, num_clients: int,
     elif kind == "alie":
         if num_mal < 2:
             raise ValueError("alie estimates mean/std from >= 2 colluding malicious clients")
+        if malicious_per_round is not None and malicious_per_round < 2:
+            raise ValueError("alie needs malicious_per_round >= 2")
         z = a.get("z")
         if z != "z_max":
             z = _float(z, "attack.z")
+        elif malicious_per_round is not None:
+            alie_z_max(clients_per_round, malicious_per_round)   # raises if undefined
         elif clients_per_round == num_clients:
             alie_z_max(clients_per_round, num_mal)   # raises if undefined for (n, m)
         kw["z"] = z
@@ -294,8 +301,24 @@ def parse_sim_config(raw: dict) -> SimConfig:
         raise ValueError(f"protocol 'etf' supports only {ETF_RULES}; {defense.name!r} needs "
                          "coordinate-wise comparisons that CKKS does not provide")
 
+    sampling = e.get("sampling", "uniform")
+    mpr = e.get("malicious_per_round")
+    if sampling not in ("uniform", "stratified"):
+        raise ValueError(f"experiment.sampling must be 'uniform' or 'stratified', got {sampling!r}")
+    if sampling == "uniform" and mpr is not None:
+        raise ValueError("experiment.malicious_per_round requires sampling 'stratified'")
+    if sampling == "stratified":
+        mpr = _int(mpr, "experiment.malicious_per_round", 1)
     attack = _parse_attack(raw.get("attack") or {"type": "none"}, dataset, num_classes,
-                           num_clients, rounds, k)
+                           num_clients, rounds, k, mpr)
+    if sampling == "stratified":
+        if attack.type == "none":
+            raise ValueError("stratified sampling needs malicious clients (attack.type != 'none')")
+        if mpr > attack.num_malicious or mpr >= k:
+            raise ValueError(f"malicious_per_round={mpr} must be <= num_malicious="
+                             f"{attack.num_malicious} and < clients_per_round={k}")
+        if k - mpr > num_clients - attack.num_malicious:
+            raise ValueError("not enough honest clients for the honest share of each round")
     crypto = dict(raw.get("crypto") or {})
     if protocol != "plaintext":
         for key in ("poly_modulus_degree", "coeff_mod_bit_sizes", "global_scale", "chunk_size"):
@@ -311,7 +334,7 @@ def parse_sim_config(raw: dict) -> SimConfig:
         lr=_float(e.get("lr"), "experiment.lr", positive=True),
         momentum=_float(e.get("momentum", 0.0), "experiment.momentum", minimum=0.0),
         weight_decay=_float(e.get("weight_decay", 0.0), "experiment.weight_decay", minimum=0.0),
-        protocol=protocol,
+        protocol=protocol, sampling=sampling, malicious_per_round=mpr,
         eval_batch_size=_int(e.get("eval_batch_size", 256), "experiment.eval_batch_size", 1),
         max_eval_samples=_opt_int(e.get("max_eval_samples"), "experiment.max_eval_samples", 1),
         defense=defense, attack=attack, crypto=crypto, dataset_params=dparams,

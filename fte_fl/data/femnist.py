@@ -37,21 +37,24 @@ def parse_leaf_json(path: str | Path) -> dict:
 def _load_all_users(data_dir: str | Path) -> dict[str, dict]:
     """Aggregate user_data across all JSON files in a directory.
 
-    Returns dict mapping user_id -> {'x': [...], 'y': [...]}.
+    Returns dict mapping user_id -> {'x': float32 array (N, 784), 'y': int64
+    array (N,)}, samples in file order.  Each file's samples are converted to
+    arrays as soon as it is parsed: holding every writer's pixels as Python
+    float lists peaked at ~1.5 GB for the 36,700 training images.
     """
     data_dir = Path(data_dir)
     json_files = sorted(glob.glob(str(data_dir / "*.json")))
     if not json_files:
         raise FileNotFoundError(f"No JSON files found in {data_dir}")
-    all_users: dict[str, dict] = {}
+    chunks: dict[str, dict] = {}
     for jf in json_files:
         data = parse_leaf_json(jf)
         for uid in data["users"]:
-            if uid not in all_users:
-                all_users[uid] = {"x": [], "y": []}
-            all_users[uid]["x"].extend(data["user_data"][uid]["x"])
-            all_users[uid]["y"].extend(data["user_data"][uid]["y"])
-    return all_users
+            entry = chunks.setdefault(uid, {"x": [], "y": []})
+            entry["x"].append(np.array(data["user_data"][uid]["x"], dtype=np.float32).reshape(-1, 784))
+            entry["y"].append(np.array(data["user_data"][uid]["y"], dtype=np.int64))
+        del data
+    return {uid: {"x": np.concatenate(c["x"]), "y": np.concatenate(c["y"])} for uid, c in chunks.items()}
 
 
 class FemnistDataset(Dataset):

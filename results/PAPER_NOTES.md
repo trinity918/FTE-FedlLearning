@@ -691,6 +691,119 @@ Extrapolations (NOT measured; linear in the measured per-unit costs):
 
 ---
 
+## Milestone 6: Experiments — Provenance, Decisions and Caveats
+
+Results are not copied here: they live in the run directories, and
+`python -m fte_fl.eval.paper_artifacts` regenerates every table and figure from
+them. This section records what those numbers mean. Chronology:
+`results/WINDOWS_PROGRESS.md`.
+
+### Grids
+
+| Grid (`fte_fl/experiments/grids/`) | Output | Role |
+|---|---|---|
+| `femnist_lr_sweep`, `femnist_main`, `femnist_stability_lr0.1` | `results/runs/m6/` | hyperparameter history (lr 0.2 kept as the record of its divergence) |
+| `femnist_main_lr0.1` | `results/runs/m6/femnist_main_lr0.1` | main FEMNIST grid, 8 conditions x 5 defenses x 3 seeds |
+| `femnist_stratified_control` | `results/runs/m6_windows/femnist_stratified_control` | matched-sampling control (proposed extension) |
+| `femnist_platform_attack_check` | `results/runs/m6_windows/platform_check` | attacked Windows replays (proposed extension) |
+| `femnist_stratified_control_rerun` | `results/runs/m6_windows/femnist_stratified_control_rerun` | replaces 12 invalid control runs; merge with `noop__trimmed` from the original directory |
+| `femnist_platform_attack_check_rerun` | `results/runs/m6_windows/platform_check_rerun` | replaces 2 invalid replays |
+| `speech_lr_pilot` | `results/runs/m6_windows/speech_lr_pilot` | stopped; kept as the record of why it was redesigned |
+| `speech_pilot_v2` | `results/runs/m6_windows/speech_pilot_v2` | Speech learning-rate selection on validation |
+| `speech_main_bcres_seed{0,1,2}` | `results/runs/m6_windows/speech_main_bcres` | Speech grid (proposed extension) |
+
+### Platform comparison
+
+Execution moved from WSL2 (Python 3.10.12) to native Windows (Python 3.11.9)
+on 2026-11-01, with the same package versions. Of the main grid, honest,
+sign-flip and scaling ran on Linux; the rest on Windows. All rounds of
+`zero__fedavg` ran on Windows: they were interrupted by the memory-pressure kill
+and resumed from their checkpoints. A resume is not bitwise-affected on one
+platform (tested). Each run's `config.json` records its platform.
+
+Windows replay of `honest__fedavg/seed0` (`fte_fl.eval.platform_check`, 100
+rounds): same config hash, same partition, same participants in every round.
+Not bitwise identical: numerics differ from round 1 and the largest per-round
+accuracy difference was 0.0546. Final accuracy 0.7556 (Linux) vs 0.7561
+(Windows); last-10 mean 0.7576 on both. The last-10 std across the three Linux
+seeds is 0.0093. One replay is one sample, so this supports treating
+end-of-training summaries as comparable and does not support comparing
+individual rounds across platforms.
+
+Attacked replays, seed 0, same checks: scaling Multi-Krum last-10 0.7250 vs 0.7245
+(largest round difference 0.0743); sign flip trimmed mean 0.4817 vs 0.4796 (0.0259).
+The first attempt at these two runs was invalid (`results/WINDOWS_PROGRESS.md` 19:53);
+these numbers come from `platform_check_rerun`.
+
+### Sampling confound and its control
+
+Honest runs sample uniformly; attacked runs use stratified sampling with exactly
+4 of 40 designated clients per round. An honest-vs-attacked gap therefore mixes
+the attack with the sampling change. The config rejects stratified sampling
+without an attack, so the control uses `attack.type: scaling` with `gamma: 1.0`:
+those clients send their update unchanged while the sampling matches the
+attacked runs exactly. The control also differs from the honest runs in
+platform, so a difference between them cannot be split between the two causes.
+
+Result, last-10 accuracy, control minus honest, paired over seeds 0-2: FedAvg -0.005
+[-0.021, +0.012], Krum -0.006 [-0.078, +0.065], Multi-Krum -0.007 [-0.031, +0.016],
+trimmed mean -0.007 [-0.026, +0.012], Bulyan -0.013 [-0.091, +0.064]. All include zero.
+
+### Speech Commands design
+
+- The feature cache stores `wav_to_logmel` output exactly. Verified bit-identical
+  on 500 random clips at one torch thread; FFT rounding differs by up to ~1e-6 at
+  4 or 8 threads. Runs use `runtime.torch_threads: 1`, as the cache was built.
+- `speech_lr_pilot` (batch 32, 2 local epochs, 20 clients) was stopped after 6-7
+  rounds. A speaker holds ~38 clips, so a client took ~4 SGD steps per round;
+  validation accuracy stayed at 0.041 (one class) while loss fell slowly from
+  ln 35. A learning rate cannot fix that. Its partial runs are not results.
+- `speech_sanity` is centralized and is not a federated result. It showed BC-ResNet
+  learns (validation 0.236 after 400 steps, 45 ms/sample) and LoRA-AST does not
+  (at lr 0.1 the loss rose above ln 35; at lr 0.001-0.03, last validation
+  0.050, 0.047, 0.045, 0.080 after 1500 steps; 6 ms/sample).
+- **LoRA-AST received no attack grid.** One 40-round federated honest run reached
+  0.076 on the full test set. A model near chance cannot show a defense working.
+  This is a measured result about LoRA on a random frozen backbone and says
+  nothing about LoRA on pretrained backbones. No pretrained weights were used.
+- `speech_pilot_v2`: 11 clients per round (the smallest n admitting Bulyan with
+  f = 2, though Bulyan is not in the Speech grid), batch 8, 2 local epochs, 40
+  rounds, seeded 300-clip in-loop evaluation. Validation at round 40: lr 0.2
+  0.49, lr 0.1 0.36, so lr 0.2 was chosen. It is the largest value tried, so a
+  larger one may be better.
+- The Speech grid is limited by CPU time (~33 min per run): 4 conditions x 3
+  defenses x 2 seeds x 40 rounds. **40 rounds is not convergence**, and BC-ResNet's
+  published accuracy is for a different (12-class) task, so the two are not comparable.
+- `fte_fl.eval.full_eval` rescored final checkpoints on all 11,005 test clips. It
+  refuses a run unless it reproduces the recorded in-loop subset accuracy exactly,
+  which also proves the frozen LoRA weights were rebuilt correctly.
+
+### Speech Commands results (seeds 0-2, 36 runs, full test split)
+
+26 completed, 10 diverged (non-finite evaluation loss). Accuracy, mean and sample std
+over finished seeds, from `paper/tables/speech_bcres_accuracy.tex`:
+honest FedAvg 0.497, Multi-Krum 0.408, trimmed 0.382. Scaling: FedAvg diverged round
+1 x3, Multi-Krum 0.266, 0.385 and diverged round 8, trimmed 0.426. Sign flip: FedAvg
+diverged rounds 11, 1, 14, Multi-Krum 1, 28, 11, trimmed 0.280. Backdoor ASR: FedAvg
+0.990, 0.976, 0.989; Multi-Krum 0.981, 0.922, 0.974; trimmed 0.0004, 0.777, 0.852.
+Only 2 of the 10 divergences were replayed (seed 0), so the BatchNorm cause is verified
+for those 2 only.
+
+### Models not evaluated at scale
+
+ViT-Tiny and LoRA-ViT were not run beyond the Milestone 5 smoke and pilot runs.
+Measured cost (2.2 min/round for ViT-Tiny plaintext on the WSL setup with 10
+clients; ~50 min/round extrapolated for LoRA-ViT) rules out a grid on this CPU,
+and with only random backbones LoRA-ViT would share LoRA-AST's weakness.
+
+### Analysis checks added
+
+`analyze.py` now also rejects non-finite metrics and any checkpoint that is
+missing, from another config, at the wrong round or non-finite. All 45 Linux runs
+pass. Seed statistics use ddof=1. With 2-3 seeds, confidence intervals are wide.
+
+---
+
 ## Milestone 1 Dataset Findings (carried forward)
 
 ### FEMNIST
@@ -717,7 +830,3 @@ Extrapolations (NOT measured; linear in the measured per-unit costs):
 
 - The EEG legacy experiments from `majorproj/fl_byzantine` are NOT part of
   this study and are not referenced or reproduced here.
-- No model accuracy results have been measured yet (experiments are Milestone 6).
-- No attack/defense evaluation has occurred yet. Milestone 5 ran only
-  2-round smoke tests on capped data to check that the pipeline executes;
-  they are not experiments.

@@ -34,7 +34,6 @@ import json
 import math
 import os
 import platform
-import resource
 import subprocess
 import sys
 import time
@@ -77,9 +76,22 @@ def environment() -> dict:
     }
 
 
-def sample_participants(cfg: SimConfig, round_id: int) -> list[int]:
+def sample_participants(cfg: SimConfig, round_id: int, malicious=()) -> list[int]:
+    """Round participants, sorted.  uniform: clients_per_round of all clients
+    without replacement.  stratified: exactly malicious_per_round of the
+    malicious clients plus the rest from the honest clients, each without
+    replacement, so every round has the same number of malicious participants."""
     rng = np.random.default_rng(derive_seed(cfg.seed, SAMPLING, round_id))
-    return sorted(rng.choice(cfg.num_clients, size=cfg.clients_per_round, replace=False).tolist())
+    if cfg.sampling == "uniform":
+        return sorted(rng.choice(cfg.num_clients, size=cfg.clients_per_round, replace=False).tolist())
+    mal = sorted(malicious)
+    honest = sorted(set(range(cfg.num_clients)) - set(mal))
+    if not mal:
+        raise ValueError("stratified sampling needs the malicious client set")
+    picked = rng.choice(mal, size=cfg.malicious_per_round, replace=False).tolist()
+    picked += rng.choice(honest, size=cfg.clients_per_round - cfg.malicious_per_round,
+                         replace=False).tolist()
+    return sorted(picked)
 
 
 def local_train(model, client: ClientData, cfg: SimConfig, seed: int) -> float:
@@ -112,6 +124,26 @@ def _write_json(path: Path, obj) -> None:
 
 
 def _peak_rss_mb() -> float:
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):      # PROCESS_MEMORY_COUNTERS
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        *[(n, ctypes.c_size_t) for n in (
+                            "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                            "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                            "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]]
+
+        c = Counters(cb=ctypes.sizeof(Counters))
+        kernel32 = ctypes.WinDLL("kernel32")
+        psapi = ctypes.WinDLL("psapi")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb):
+            raise OSError("GetProcessMemoryInfo failed")
+        return c.PeakWorkingSetSize / (1024.0 * 1024.0)
+    import resource
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0   # Linux: KiB
 
 
@@ -143,11 +175,15 @@ class Simulation:
                 raise ValueError("checkpoint belongs to a different config")
             self._resume_vector = state["vector"].numpy()
             done = int(state["round"])
-        # drop metrics of rounds after the checkpoint (crash between the two writes)
+        # drop the metrics line of the round after the checkpoint (crash between the two
+        # writes); anything more means a lost or stale checkpoint: refuse before writing
         lines = (d / "metrics.jsonl").read_text().splitlines() if (d / "metrics.jsonl").exists() else []
         kept = [ln for ln in lines if json.loads(ln)["round"] <= done]
         if [json.loads(ln)["round"] for ln in kept] != list(range(1, done + 1)):
             raise ValueError(f"metrics.jsonl does not hold rounds 1..{done}")
+        if len(lines) - len(kept) > 1:
+            raise ValueError(f"cannot resume {d}: metrics.jsonl has {len(lines)} rounds but the checkpoint "
+                             f"is {'missing' if not ckpt.exists() else f'at round {done}'}")
         (d / "metrics.jsonl").write_text("".join(ln + "\n" for ln in kept))
         return done
 
@@ -238,13 +274,14 @@ class Simulation:
         self.attack_eval_info = info
 
     # ── one round ───────────────────────────────────────────────────────────
-    def run_round(self, r: int) -> dict:
+    def client_updates(self, r: int):
+        """Steps 1-3 of round r from the current global vector: participants,
+        malicious mask, whether the attack is active, the (attacked) update
+        matrix, sample counts, local losses and local training times."""
         cfg, atk = self.cfg, self.cfg.attack
-        t_round = time.perf_counter()
-        part = sample_participants(cfg, r)
+        part = sample_participants(cfg, r, self.malicious)
         active = atk.type != "none" and r >= atk.start_round
         is_mal = np.array([ci in self.malicious for ci in part])
-
         deltas, losses, train_times, counts = [], [], [], []
         for ci in part:
             client = self.data.clients[ci]
@@ -260,9 +297,15 @@ class Simulation:
         deltas = np.stack(deltas)
         if active and atk.type in UPDATE_ATTACKS:
             deltas = fl_attacks.attack_updates(deltas, is_mal, part, r, atk)
+        return part, is_mal, active, deltas, np.array(counts), losses, train_times
+
+    def run_round(self, r: int) -> dict:
+        cfg, atk = self.cfg, self.cfg.attack
+        t_round = time.perf_counter()
+        part, is_mal, active, deltas, counts, losses, train_times = self.client_updates(r)
 
         t = time.perf_counter()
-        agg = aggregate(deltas, np.array(counts), cfg, r, self.key_holder)
+        agg = aggregate(deltas, counts, cfg, r, self.key_holder)
         agg_s = time.perf_counter() - t
         set_vector(self.model, self.global_vec + agg.aggregate)
         self.global_vec = get_vector(self.model)

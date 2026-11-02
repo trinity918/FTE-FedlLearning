@@ -1,0 +1,121 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{FEMNIST}
+
+Table~\ref{tab:femnist-accuracy} gives clean test accuracy and Figure~\ref{fig:femnist-heatmap} shows the same values. Table~\ref{tab:femnist-paired} compares each defense with FedAvg under the same attack, paired by seed.
+
+\begin{table}[H]
+\centering
+\caption{FEMNIST clean test accuracy: mean $\pm$ sample standard deviation over three seeds of each seed's last-10-round mean. A dash means no validated runs.}
+\label{tab:femnist-accuracy}
+\resizebox{\linewidth}{!}{\input{tables/femnist_accuracy}}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\linewidth]{femnist_heatmap}
+\caption{FEMNIST clean test accuracy by attack and defense.}
+\label{fig:femnist-heatmap}
+\end{figure}
+
+\paragraph{Robustness has a price without an attack.}
+With no attack, every robust rule lost accuracy against FedAvg's 0.752. Multi-Krum lost least, at 0.032 (95\% CI 0.007 to 0.058), followed by trimmed mean at 0.123, Krum at 0.274 and Bulyan at 0.284. Krum keeps one client per round and Bulyan rejects about 40\% of honest participants, so a likely reason for their loss is that they discard much of each round's information from non-IID writers. We did not test this explanation.
+
+\paragraph{Which attack matters depends on the rule.}
+Scaling with $\gamma=10$ harmed FedAvg badly while leaving a robust rule almost unaffected. FedAvg fell to 0.546, and Multi-Krum held 0.724, a paired gain of 0.178 (95\% CI 0.093 to 0.262). Trimmed mean gained 0.146 (95\% CI 0.039 to 0.253). Sign flip reduced FedAvg to 0.647, yet no robust rule beat it there. Multi-Krum came closest at 0.610, and trimmed mean and Bulyan were hit harder than FedAvg (0.467 and 0.380).
+
+\paragraph{The zero attack stopped Krum.}
+Zero was the most damaging attack in the grid, and it did almost nothing to FedAvg, which held 0.723. Krum fell to 0.054 and Bulyan to 0.094. Krum selected a zero update nearly every round: its aggregate was exactly zero in 98 to 99 of 100 rounds on every seed, and it rejected all honest clients over the last 10 rounds (FPR 1.000). The global model barely trained. A likely reason is that the identical zero updates sit near each other and may lie nearer to honest updates than honest updates lie to one another, but we did not measure these distances. Multi-Krum kept every zero update and lost less (0.643), and trimmed mean reached 0.473.
+
+\paragraph{Gaussian replacement was absorbed.}
+Multi-Krum rejected every Gaussian update at an FPR of 0.000 and scored 0.722, its honest level. Trimmed mean scored 0.668, above its honest 0.630. FedAvg still led at 0.738, so no robust rule gained accuracy here either. Scaling was the only attack on FEMNIST where any robust rule beat FedAvg.
+
+\paragraph{ALIE and label flipping did not reduce FedAvg's accuracy here.}
+FedAvg reached 0.742 under ALIE and 0.750 under label flipping, close to its 0.752 without attack. The label flip rate stayed near zero for every rule (Table~\ref{tab:femnist-flip}). Under these settings, all robust rules scored below FedAvg on both attacks, so for these attacks they cost accuracy and bought none.
+
+\begin{table}[H]
+\centering
+\caption{Paired difference from FedAvg under the same attack, with a two-sided 95\% $t$ interval on 2 degrees of freedom.}
+\label{tab:femnist-paired}
+\input{tables/femnist_paired}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{FEMNIST filtering: fraction of malicious participants rejected (TPR).}
+\label{tab:femnist-tpr}
+\resizebox{\linewidth}{!}{\input{tables/femnist_tpr}}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{FEMNIST filtering: fraction of honest participants rejected (FPR).}
+\label{tab:femnist-fpr}
+\resizebox{\linewidth}{!}{\input{tables/femnist_fpr}}
+\end{table}
+
+\paragraph{Filtering rarely separates clients cleanly.}
+Tables~\ref{tab:femnist-tpr} and~\ref{tab:femnist-fpr} show that only scaling and Gaussian replacement are filtered cleanly: Multi-Krum's TPR is 0.992 and 1.000 at FPRs of 0.002 and 0.000. Elsewhere rejection is close to indiscriminate or inverted. Under ALIE, Multi-Krum rejected malicious clients at 0.025 and honest clients at 0.244, and under the zero attack at 0.000 and 0.250, so a malicious client was less likely to be rejected than an honest one. Krum's high TPR reflects that it keeps one client per round, rejecting honest clients at 0.938 or above. Its TPR should not be read as detection. Trimmed mean and FedAvg show zero rejection by construction, so the table says nothing about their robustness.
+
+\begin{table}[H]
+\centering
+\caption{FEMNIST backdoor attack success rate, last-10-round mean. Krum's seeds were 0.043, 0.060 and 0.977.}
+\label{tab:femnist-asr}
+\resizebox{\linewidth}{!}{\input{tables/femnist_asr}}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{FEMNIST label flip rate (source class 1 to target class 7).}
+\label{tab:femnist-flip}
+\resizebox{\linewidth}{!}{\input{tables/femnist_flip}}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\linewidth]{femnist_asr}
+\caption{FEMNIST backdoor attack success rate over rounds; the band is one sample standard deviation.}
+\label{fig:femnist-asr}
+\end{figure}
+
+\paragraph{Backdoor.}
+The backdoor reached an ASR of 1.000 on all three seeds under both FedAvg and Multi-Krum (Table~\ref{tab:femnist-asr}), so Multi-Krum, the best-performing rule on clean accuracy, gave no protection. Bulyan was lowest at 0.130, but with clean accuracy of only 0.438. Trimmed mean reached 0.427 with wide variation. Krum's mean of 0.360 hides a split: two seeds stayed near 0.05 and one reached 0.977. This is one rule on three seeds, and we draw no conclusion about Krum's reliability beyond that spread.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{femnist_curves}
+\caption{FEMNIST test accuracy over rounds; the band is one sample standard deviation.}
+\label{fig:femnist-curves}
+\end{figure}
+
+\subsection{Speech Commands}
+
+Table~\ref{tab:speech-accuracy} gives accuracy on the full test split after 40 rounds, which is not convergence. Only FedAvg, Multi-Krum and trimmed mean ran here, on seeds 0 to 2. Because many cells have diverged seeds, we give no paired intervals.
+
+\begin{table}[H]
+\centering
+\caption{Speech Commands full-test accuracy after 40 rounds, BC-ResNet-8: mean $\pm$ sample standard deviation over the seeds that finished. ``div.\ round $r$'' gives the round each other seed diverged, and such runs have no accuracy.}
+\label{tab:speech-accuracy}
+\input{tables/speech_bcres_accuracy}
+\end{table}
+
+\paragraph{Baseline.}
+Without an attack FedAvg scored 0.497, Multi-Krum 0.408 and trimmed mean 0.382. The robust rules cost more here, relative to FedAvg, than Multi-Krum did on FEMNIST, although training was far from converged.
+
+\paragraph{Attacks caused divergence.}
+Ten of the 36 runs failed, all with a non-finite evaluation loss. FedAvg diverged in round~1 under scaling on all three seeds, and under sign flip in rounds 11, 1 and 14. Multi-Krum diverged under sign flip in rounds 1, 28 and 11, and under scaling in round~8 of seed~2. No honest run and no trimmed-mean run diverged. We replayed two of these runs, scaling with FedAvg and sign flip with Multi-Krum on seed~0. Both came from a negative BatchNorm running variance in the aggregate, which the simulator refuses to clamp (Section~\ref{sec:limitations}). In the Multi-Krum case a single flipped client passed the filter and left 1 of 128 entries in one layer negative. The other eight were not replayed, so their cause is unverified.
+
+\paragraph{Trimmed mean held on the update attacks.}
+Trimmed mean was the only rule to complete all attacks. Under scaling it scored 0.426, above its 0.382 without attack on all three seeds, as it also did on FEMNIST. We did not test why. Sign flip reduced it to 0.280. Multi-Krum finished scaling on two seeds, at 0.266 and 0.385 against 0.408 without attack, though it rejected 0.85 and 1.00 of malicious clients over their last 10 rounds. A scaled update that passes the filter even occasionally may do lasting damage, which could explain the gap, but we did not test this.
+
+\paragraph{Backdoor.}
+The feature-space backdoor reached an ASR of at least 0.976 under FedAvg and at least 0.922 under Multi-Krum on every seed (Table~\ref{tab:speech-asr}). Under trimmed mean the seeds disagreed completely, at 0.0004, 0.777 and 0.852, and the seed~0 run had reached 0.831 on the 300-clip in-loop subset before falling to zero. On seed~2 the in-loop value moved between 0.07 and 0.80 in the last six rounds, so a single final score is unstable. Trimmed mean therefore did not reliably stop this backdoor, and its mean of 0.543 describes no seed.
+
+\begin{table}[H]
+\centering
+\caption{Speech Commands backdoor ASR on the full test split after 40 rounds, over three seeds.}
+\label{tab:speech-asr}
+\input{tables/speech_bcres_asr}
+\end{table}
+

@@ -1,0 +1,17 @@
+\section{Introduction}
+
+Federated learning trains a shared model while clients keep their data, sending only model updates to a server~\cite{mcmahan2017fedavg}. Those updates are not harmless. They can be inverted to recover training inputs~\cite{zhu2019dlg,geiping2020inverting}, which motivates hiding them from the aggregator through secure aggregation~\cite{bonawitz2017secagg} or homomorphic encryption. They can also be malicious: a minority of clients can degrade or backdoor the global model~\cite{fang2020local,baruch2019alie,xie2020dba}, which motivates robust aggregation rules such as Krum~\cite{blanchard2017krum}, coordinate-wise trimmed mean~\cite{yin2018trimmed} and Bulyan~\cite{elmhamdi2018bulyan}.
+
+The two goals conflict. Robust rules inspect individual updates, and encryption exists to prevent exactly that. A system must decide \emph{where} filtering happens relative to encryption, and the decision fixes who sees what, which rules are computable, and what the protocol costs.
+
+This paper studies two orderings. In \emph{Encrypt-then-Filter} (EtF), clients encrypt first and the aggregator computes encrypted pairwise distances under CKKS~\cite{cheon2017ckks}; a key holder decrypts only those distances and returns a selection. In \emph{Filter-then-Encrypt} (FTE), a filter sees plaintext updates and selects contributors, and only then do clients encrypt, so the aggregator handles ciphertexts of already-filtered updates. A third variant adds Pedersen commitments~\cite{pedersen1991commit} and Schnorr-style proofs of knowledge~\cite{schnorr1991signature} that bind the plaintext a client showed the filter to a public commitment.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item A reproducible single-process simulator implementing plaintext, EtF, FTE and attested FTE over the same client updates, with real CKKS arithmetic through TenSEAL~\cite{benaissa2021tenseal}.
+\item A controlled robustness evaluation on FEMNIST~\cite{caldas2018leaf} and Speech Commands~\cite{warden2018speech}, reporting only completed, validated runs, with their seeds and failures.
+\item A measurement of the protocols on identical update matrices, separating what the ordering changes (which rules run, their cost, what each party sees) from what it does not (the plaintext rule's selection, up to CKKS approximation).
+\item An explicit account of what each ordering does and does not guarantee, including that FTE's filter sees every plaintext update.
+\end{itemize}
+
+We do not claim FTE is more private than EtF. It is not: it moves trust from a key holder who sees pairwise distances to a filter who sees whole updates. The question is what that trade buys, and at what cost.

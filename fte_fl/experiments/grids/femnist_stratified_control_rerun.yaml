@@ -1,0 +1,69 @@
+description: 'Matched-sampling control for femnist_main_lr0.1 (proposed extension, not part of the original grid).
+  The honest runs of the main grid use uniform sampling while attacked runs use stratified sampling with exactly
+  4 of the 40 designated clients per round, so honest-vs-attacked gaps mix attack and sampling effects. Here the
+  same 40 clients are sampled the same way but behave honestly: attack.type scaling with gamma 1.0 sends each client''s
+  update unchanged. Same hyperparameters, same seeds. Executed on native Windows.'
+base_config: fte_fl/configs/default.yaml
+output_dir: results/runs/m6_windows/femnist_stratified_control_rerun
+seeds:
+- 0
+- 1
+- 2
+common:
+  experiment.rounds: 100
+  experiment.clients_per_round: 20
+  experiment.lr: 0.1
+  experiment.local_epochs: 3
+  runtime.torch_threads: 1
+runs:
+  noop__fedavg:
+    defense.name: fedavg
+    defense.f: null
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 1.0
+  noop__krum:
+    defense.name: krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 1.0
+  noop__multikrum:
+    defense.name: multi_krum
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 1.0
+  noop__trimmed:
+    defense.name: trimmed_mean
+    defense.f: null
+    defense.b: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 1.0
+  noop__bulyan:
+    defense.name: bulyan
+    defense.f: 4
+    experiment.sampling: stratified
+    experiment.malicious_per_round: 4
+    attack.num_malicious: 40
+    attack.start_round: 1
+    attack.seed: 0
+    attack.type: scaling
+    attack.gamma: 1.0

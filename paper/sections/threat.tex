@@ -1,0 +1,11 @@
+\section{Threat Model}
+\label{sec:threat}
+
+\paragraph{Clients.}
+A fixed set of clients, drawn once with an attack seed and unchanged for the run, is malicious and colludes. Update attacks transform the client's honestly trained update: sign flip ($-u$), scaling ($\gamma u$, $\gamma=10$), zero, and Gaussian replacement (i.i.d.\ $\mathcal{N}(0,0.05^2)$). ALIE sends $\mu-z\sigma$ coordinate-wise with $z=z_{\max}$, using only the statistics of the malicious participants' own updates, never honest clients' updates~\cite{baruch2019alie}. Data attacks poison local training data: a label flip of class $1\to 7$, and a backdoor whose trigger is split across clients in the style of DBA. This is \emph{DBA-style, not a reproduction}: DBA's schedule, per-batch poisoning and model-update scaling are not replicated~\cite{xie2020dba}. On Speech Commands the trigger is a \emph{feature-space} log-mel adaptation of a 1\,kHz tone; no waveform is poisoned, and its audibility was not evaluated.
+
+\paragraph{Defense budget.}
+Rules assume $f=b=4$ of 20 participants. Attacked runs use stratified sampling so that exactly 4 of the 20 participants each round are malicious; the budget is therefore never exceeded by construction, which is favourable to the defenses.
+
+\paragraph{Protocol parties.}
+Roles are clients, an aggregator without the secret key, a single trusted key holder (no threshold decryption), and, in FTE, a filter that receives plaintext. All roles run in one process with no network, so separation of parties is simulated, not enforced by deployment. The attacker considered in the experiments is at the clients only; server-side parties are honest-but-curious in the analysis of Section~\ref{sec:security}.
